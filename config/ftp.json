@@ -1,0 +1,12 @@
+{
+  "_nota": "Archivo de configuracion FTP de prueba, ya completo. Va en config\\ftp.json, separado de los scripts. Si se ejecuta Instalar_FTP.bat sin este archivo presente, el asistente ya trae estos mismos datos como valores por defecto (basta con Enter en cada pregunta). No se fija 'remoteDir' aqui a proposito: si este archivo se copia tal cual a varias PC, Cargador_FTP.ps1 usa por defecto una carpeta remota con el nombre de cada equipo (/NOMBRE-PC/). Si prefiere fijar una carpeta distinta, agregue la clave \"remoteDir\": \"/lo-que-sea/\".",
+  "schemaVersion": 1,
+  "protocol": "ftp",
+  "host": "solucionesnicaragua.com",
+  "port": 21,
+  "user": "registros@solucionesnicaragua.com",
+  "password": "yxFM5awxECy8qaftpnMy",
+  "runEveryMin": 120,
+  "retries": 3,
+  "uploadCurrentDay": true
+}
