@@ -158,7 +158,7 @@ $cfgObj = [ordered]@{
 ($cfgObj | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $monitorCfgPath -Encoding utf8 -Force
 
 $verPath = Join-Path $cfgDir 'version.json'
-([ordered]@{ schemaVersion = 1; version = '1.9' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
+([ordered]@{ schemaVersion = 1; version = '1.10' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
 
 # ---- Parada ordenada (y, si hace falta, forzada) de una instancia previa, antes de copiar los
 # scripts nuevos. Todo el bloque va en try/catch: un fallo aqui (por ejemplo, el proceso no responde)

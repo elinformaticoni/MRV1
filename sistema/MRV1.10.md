@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| Versión | MR V1.8 |
-| Nombre del paquete | `MRV1.8` — el paquete (carpeta/ZIP) y esta guía llevan siempre el mismo nombre y la misma versión, esquema `MRV1.<sub>` (igual que la carpeta de instalación `C:\ProgramData\MRV1`, ver 3.4); la guía viaja **dentro** del paquete, no se entrega suelta. |
+| Versión | MR V1.10 |
+| Cambios en 1.10 | Formulario web de **análisis semanal** en el servidor (`backend/api/index.php`, sección 10.5): gráfico de caídas por máquina y destino, coincidencias entre máquinas, filtro Cable/Wi-Fi y descarga de un HTML autocontenido. En la PC del cliente solo cambia el número de versión (`version.json` = `1.10`); scripts, CSV y configuración siguen igual que en 1.9. |
+| Nombre del paquete | `MRV1.10` — el paquete (carpeta/ZIP) y esta guía llevan siempre el mismo nombre y la misma versión, esquema `MRV1.<sub>` (igual que la carpeta de instalación `C:\ProgramData\MRV1`, ver 3.4); la guía viaja **dentro** del paquete, no se entrega suelta. |
 | Repositorio | `https://github.com/elinformaticoni/MRV1.git` |
 
 ---
@@ -29,7 +30,7 @@ Debe:
 - detectar cambios relevantes de la red local;
 - mostrar el estado en una consola visual que se pueda abrir en cualquier momento;
 - subir automáticamente los registros a un servidor FTP y moverlos a una carpeta de cargados;
-- opcionalmente, replicar los registros a una API/base de datos central (sección 10);
+- opcionalmente, replicar los registros a una API/base de datos central (sección 10) y analizarlos en un formulario web con gráfico semanal y reporte HTML descargable (sección 10.5);
 - instalarse y desinstalarse con archivos BAT;
 - seguir funcionando tras reiniciar Windows;
 - ser reutilizable en distintas computadoras.
@@ -65,7 +66,7 @@ Debe:
 | Componente | Archivo | Responsabilidad | Escribe | Lee |
 |---|---|---|---|---|
 | Monitor | `Monitor_Red.ps1` | Ping, estados, detección de eventos y de red local, CSV | CSV, `status.json` | `monitor.json` |
-| Consola | `Monitor_Red_Console.ps1` | Visualización en tiempo real | nada | CSV, `status.json`, `ftp_status.json` |
+| Consola | `Monitor_Red_Console.ps1` | Visualización en tiempo real | nada | CSV, `status.json`, `ftp_status.json`, `db_status.json`; `ftp.json` y `db_api.json` solo para saber si cada carga está configurada |
 | Cargador FTP | `Cargador_FTP.ps1` | Subir CSV, verificar, mover días cerrados a `cargados` | `ftp_worker.log`, `ftp_status.json`, `logs\cargados\` | CSV, `ftp.json` |
 | Cargador API (opcional) | `Cargador_DB.ps1` | Replicar filas de CSV a la API de análisis (sección 10) | `db_worker.log`, `db_status.json`, `db_sync_state.json` | CSV, `logs\cargados\`, `db_api.json` |
 | Instaladores / desinstaladores | `.BAT` / `.ps1` | Copiar archivos, configuración, tareas programadas | configuración, tareas | — |
@@ -76,7 +77,7 @@ Debe:
 ```text
 Monitor_Red.ps1 ──► CSV (logs\) ──► Cargador_FTP.ps1 ──► Servidor FTP
        │                 │                  └──► logs\cargados\ (días anteriores, solo tras confirmar la subida)
-       │                 ├──► Cargador_DB.ps1 [opcional] ──► API/MySQL (sección 10)
+       │                 ├──► Cargador_DB.ps1 [opcional] ──► API/MySQL ──► index.php: análisis semanal (sección 10.5)
        │                 └──────────────────► Monitor_Red_Console.ps1 (lee: historial y totales)
        └──► status.json ────────────────────► Monitor_Red_Console.ps1 (lee: estado instantáneo)
 ```
@@ -104,24 +105,33 @@ C:\ProgramData\MRV1\
 **En el paquete/repositorio de origen (no se instala en la PC del cliente):**
 
 ```text
-MRV1\                        Carpeta de trabajo / raíz del repositorio
-    MRV1.8.md                 Esta guía
-    Monitor_Red.ps1, Monitor_Red_Console.ps1, Cargador_FTP.ps1, Cargador_DB.ps1
-    Instalar_*.ps1 / .bat, Desinstalar_*.bat
-    config\ftp.json, config\db_api.example.json
-    backend\                  API + base de datos del servidor (sección 10.3) — vive en el
+MRV1\                         Raíz del paquete / repositorio (solo lo que usa una persona)
+    Instalar_Monitor.bat       Instalador principal (al final ofrece instalar FTP y DB)
+    Desinstalar_Monitor.bat    Desinstalador principal (pregunta si quita también FTP y DB)
+    Abrir_Consola.bat          Abre la consola
+    README.md, LICENSE         Presentación del repositorio (GitHub)
+    backend\                   API + base de datos del servidor (sección 10.3) — vive en el
                                mismo repositorio para mantener todo junto, pero NINGÚN
                                instalador de MRV1 la copia ni la toca en la PC del cliente.
         README.md, IA.md
         sql\001_crear_base.sql
-        api\registros.php, lib\, config\
+        api\index.php (formulario de análisis [v1.10]), registros.php, lib\, config\
+    sistema\                   Todo lo demás [v1.9]
+        MRV1.10.md             Esta guía
+        Monitor_Red.ps1, Monitor_Red_Console.ps1, Cargador_FTP.ps1, Cargador_DB.ps1
+        Instalar_Monitor.ps1, Instalar_FTP.ps1 / .bat, Instalar_DB.ps1 / .bat
+        Desinstalar_FTP.bat, Desinstalar_DB.bat
+        config\ftp.json, config\db_api.json (referencia; los asistentes no los leen)
 ```
+
+- **Reubicación [v1.9]:** `Instalar_Monitor.bat` busca su asistente en `sistema\Instalar_Monitor.ps1` y, si no existe, junto a sí mismo (así funciona igual la copia plana de `C:\ProgramData\MRV1`). Los tres asistentes `.ps1` buscan cada archivo que copian (`Find-SourceFile`) en su propia carpeta, la carpeta superior, `sistema\` y `bin\`, y nunca copian un archivo sobre sí mismo; así funcionan desde el paquete nuevo, desde un paquete antiguo plano y en la reinstalación desde `C:\ProgramData\MRV1` (donde los scripts están en `bin\`).
+- La estructura instalada en `C:\ProgramData\MRV1` **no cambia** (sigue plana, ver arriba).
 
 ### 3.4 Versión y empaquetado
 
-- La versión es un control interno, guardada en `config\version.json`. A partir de la entrega 1.0, todo cambio posterior avanza solo la subversión (1.1, 1.2… 1.8): correcciones, mejoras y ajustes se numeran así y no cambian de versión mayor ni de carpeta de instalación (`C:\ProgramData\MRV1`). Una versión mayor (2.x) quedaría reservada para un cambio de arquitectura que rompa compatibilidad, y en ese caso sí migraría carpeta, logs y configuración.
+- La versión es un control interno, guardada en `config\version.json`. A partir de la entrega 1.0, todo cambio posterior avanza solo la subversión (1.1, 1.2… 1.9, 1.10…): correcciones, mejoras y ajustes se numeran así y no cambian de versión mayor ni de carpeta de instalación (`C:\ProgramData\MRV1`). Una versión mayor (2.x) quedaría reservada para un cambio de arquitectura que rompa compatibilidad, y en ese caso sí migraría carpeta, logs y configuración.
 - Reinstalar sobrescribe la versión anterior de forma transparente (ver 4.6); el asistente de instalación es quien actualiza `version.json`.
-- El paquete que se entrega (carpeta/ZIP) y esta guía comparten siempre el mismo nombre y la misma subversión: esquema `MRV1.<sub>` (por ejemplo `MRV1.8`, `MRV1.8.zip`, con la guía `MRV1.8.md` dentro) — el mismo nombre que la carpeta de instalación `C:\ProgramData\MRV1`. La guía se entrega **dentro** del paquete, nunca suelta. Esto es solo una convención de empaquetado/entrega; no cambia `C:\ProgramData\MRV1`, que nunca lleva número de subversión en su nombre.
+- El paquete que se entrega (carpeta/ZIP) y esta guía comparten siempre el mismo nombre y la misma subversión: esquema `MRV1.<sub>` (por ejemplo `MRV1.10`, con la guía `MRV1.10.md` dentro; desde que el proyecto vive en GitHub, cada entrega se marca con una etiqueta de git — `v1.10` — en lugar de armar un ZIP renombrado) — el mismo nombre que la carpeta de instalación `C:\ProgramData\MRV1`. La guía se entrega **dentro** del paquete, nunca suelta. Esto es solo una convención de empaquetado/entrega; no cambia `C:\ProgramData\MRV1`, que nunca lleva número de subversión en su nombre.
 
 ---
 
@@ -146,9 +156,12 @@ Detalles para generar: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File 
 
 ### 4.2 Preguntas del instalador del monitor (`Instalar_Monitor.ps1`)
 
-El destino 1 es obligatorio; los demás son opcionales.
+Lo primero que pregunta es el **alias de esta PC** [v1.9] (Enter = el alias ya guardado; en una instalación anterior, el de `db_api.json`; si no hay, el nombre de la PC). Se pide **una sola vez**, aquí: queda en `config\monitor.json`, se muestra en el encabezado de la consola y lo usa la carga a la API. No puede quedar vacío; se le quitan `;`, `,`, comillas y saltos de línea y se limita a 60 caracteres.
+
+Luego los destinos. El destino 1 es obligatorio; los demás son opcionales.
 
 ```text
+Alias de esta PC: (Enter = actual / nombre de la PC)
 IP/Dominio a monitorear:
 Intervalo de ping en segundos: (Valor predeterminado: 5 segundos)
 Pings consecutivos para confirmar un cambio de estado: (Valor predeterminado: 1)
@@ -177,9 +190,9 @@ Cada una, si se responde S, invoca al asistente correspondiente (`Instalar_FTP.p
 
 ### 4.3 Preguntas del instalador FTP (`Instalar_FTP.ps1`)
 
-Servidor, puerto (21 por defecto), usuario, contraseña, carpeta remota y frecuencia (cada 2 horas por defecto). FTP plano, sin cifrado. Servidor de fábrica: `solucionesnicaragua.com`, puerto 21.
+Servidor, puerto (21 por defecto), usuario, contraseña y frecuencia (cada 2 horas por defecto). FTP plano, sin cifrado. Servidor de fábrica: `solucionesnicaragua.com`, puerto 21.
 
-- **Carpeta remota, valor predeterminado:** siempre se propone el nombre de esta PC (`/<PC>/`), para que cada equipo quede separado en el servidor sin que el usuario tenga que escribirlo. Si ya existe una configuración previa con una carpeta distinta, el asistente respeta ese valor como predeterminado — **excepto cuando el valor guardado es exactamente `/` (raíz)**, que no cuenta como una elección real y se vuelve a proponer `/<PC>/`. `Cargador_FTP.ps1` aplica la misma regla al subir (ver 9.2).
+- **Carpeta remota = alias de la PC [v1.9]:** ya no se pregunta. El asistente solo la muestra; `Cargador_FTP.ps1` la calcula en cada ejecución a partir del alias de `config\monitor.json` (ver 4.2), convertido a un nombre seguro para FTP: sin acentos (á→a, ñ→n), sin `/ \ : * ? " < > | # % ; ,` y sin espacios dobles (ej. «Dirección Área Niño #3» → `/Direccion Area Nino 3/`). Sin alias se usa el nombre de la PC. Si el alias cambia, la siguiente carga crea la carpeta nueva y **la anterior queda en el servidor con su contenido** (no se mueve ni se borra nada). Un `remoteDir` que haya quedado en `ftp.json` de versiones anteriores se ignora. Los nombres de los CSV no cambian (siguen llevando el nombre de la PC, ver 6.4).
 - **Verificación inmediata:** al terminar de guardar la configuración, el asistente ejecuta el cargador una vez, ahí mismo, y espera el resultado para mostrarlo en pantalla (conexión correcta y cuántos archivos se subieron, o el error concreto), sin esperar a la primera ejecución programada.
 
 ### 4.4 Preguntas del instalador de la API de análisis (`Instalar_DB.ps1`)
@@ -189,11 +202,11 @@ Todos los campos tienen un valor predeterminado; basta con Enter en cada uno par
 ```text
 URL de la API de análisis: (Enter = URL de fábrica del paquete)
 Token de la API: (Enter = mantener el actual / el de fábrica)
-Alias de esta PC: (Enter = nombre de la PC)
 Frecuencia de envío en minutos: (Enter = 180, cada 3 horas)
 Reintentos ante fallo: (Enter = 3)
 ```
 
+- [v1.9] `Instalar_DB.ps1` ya **no pregunta el alias** si `monitor.json` lo tiene: lo muestra y lo copia a `db_api.json`; solo lo pregunta si el monitor se instaló con una versión anterior sin alias. `Cargador_DB.ps1` usa siempre el de `monitor.json` y solo si falta recurre al de `db_api.json`. Para cambiarlo se vuelve a ejecutar `Instalar_Monitor.bat`.
 - El **alias** identifica el punto observado con un nombre descriptivo (ej. "Laboratorio 2 - Edificio A"); el nombre de la PC no siempre lo es. Se envía en cada carga junto con los registros (ver 10.2) y se autoregistra solo en el servidor, sin pasos manuales.
 - Al igual que el instalador FTP, al terminar prueba el envío en primer plano de inmediato y muestra el resultado (envío correcto y cuántas filas se sincronizaron, o el error concreto).
 - El token y la URL de fábrica que trae el asistente deben mantenerse actualizados en el propio script (`Instalar_DB.ps1`) antes de distribuir el paquete a otras PC — ver 10.4.
@@ -221,6 +234,11 @@ Cada asistente BAT es reutilizable tantas veces como haga falta, con la misma ve
 
 Cada `Desinstalar_*.bat` elimina la tarea programada, los scripts y la configuración de su propio componente (los desinstaladores de FTP y de la API eliminan también sus credenciales/token). **Ninguno borra los registros históricos** (`logs\`, `logs\cargados\`) ni los logs de diagnóstico. Deben tolerar que la tarea ya no exista. `Desinstalar_Monitor.bat` además quita el acceso directo del escritorio y las copias de los BAT de instalación/desinstalación en `$Root`.
 
+- **Eliminación verificada de la tarea [v1.9]:** cada desinstalador detiene la tarea, termina cualquier `powershell.exe` que siga ejecutando el script del componente, la elimina con `Unregister-ScheduledTask` y, si sigue existiendo, con `schtasks /Delete /F`; al final **comprueba** que ya no exista y, si no se pudo, lo muestra en rojo en lugar de decir que se desinstaló. Todos recuerdan pulsar F5 si el Programador de tareas estaba abierto (no refresca la lista solo).
+- Los desinstaladores de FTP y DB borran también su archivo de estado (`ftp_status.json` / `db_status.json`).
+- **`Desinstalar_Monitor.bat` y los cargadores [v1.9]:** si el Cargador FTP o la carga a la API siguen instalados, pregunta «¿Desea desinstalarlos también? [S/N] (Enter = S)». Con S los desinstala igual que sus propios BAT; con N conserva sus tareas y las copias de `Instalar_FTP/DB` y `Desinstalar_FTP/DB` en `C:\ProgramData\MRV1` (antes esas copias se borraban siempre y la tarea `MRV1 FTP`/`MRV1 DB` quedaba huérfana, sin desinstalador a mano).
+- Los `.bat` se guardan en ASCII con CRLF y **sin BOM** (un BOM al inicio rompe `@echo off`).
+
 ### 4.8 Configuración persistente e instalación genérica
 
 - La configuración se guarda en archivos estructurados, uno por componente (así cada uno se instala y desinstala de forma independiente). Los scripts no dependen de variables que solo existan durante la instalación.
@@ -231,6 +249,7 @@ Cada `Desinstalar_*.bat` elimina la tarea programada, los scripts y la configura
 // config\monitor.json
 {
   "schemaVersion": 1,
+  "alias": "Laboratorio 2 - Edificio A",
   "targets": [
     { "address": "8.8.8.8", "intervalSec": 5, "confirmPings": 1 },
     { "address": "192.168.2.1", "intervalSec": 5, "confirmPings": 1 }
@@ -244,7 +263,7 @@ Cada `Desinstalar_*.bat` elimina la tarea programada, los scripts y la configura
 {
   "schemaVersion": 1,
   "protocol": "ftp",
-  "host": "solucionesnicaragua.com", "port": 21, "remoteDir": "/<PC>/",
+  "host": "solucionesnicaragua.com", "port": 21,
   "user": "", "password": "",
   "runEveryMin": 120, "retries": 3, "uploadCurrentDay": true
 }
@@ -434,6 +453,7 @@ Representa el estado **instantáneo**: lo que los CSV no pueden dar (latencia ac
   "schemaVersion": 1,
   "version": "MR V1.0",
   "computer": "PC-01",
+  "alias": "Laboratorio 2 - Edificio A",
   "user": "Profesor1",
   "adapter": { "name": "Wi-Fi", "type": "Wi-Fi", "ip": "192.168.1.103", "status": "Up" },
   "sessionStart": "2026-09-20T07:00:00",
@@ -474,16 +494,34 @@ Interfaz visual que se puede abrir en cualquier momento. **No hace ping** y no g
 La consola muestra:
 
 **Arriba (resumen)**
+- el **alias** de la PC en la primera línea, en mayúsculas y color cian, y también en el título de la ventana [v1.9] (de `status.json`; si el monitor en marcha es anterior y no lo trae, de `config\monitor.json`);
 - computadora, usuario, adaptador actual (tipo y nombre) e IP, versión;
 - tiempo desde el inicio de la sesión;
 - por destino: dirección, estado actual, desde cuándo y duración, latencia actual y promedio, última respuesta;
 - totales y promedios por destino, del día que se está observando: suma de tiempo por estado, cantidad de errores, latencia media (calculados de las filas cerradas; las filas `[INCOMPLETO]` se excluyen).
 
-**Cargador FTP**
-- una línea de estado, leída de `Root\ftp_status.json` (la escribe `Cargador_FTP.ps1`; la consola no se conecta al FTP): hora de la última subida, cuántos archivos se subieron y la hora estimada de la próxima ejecución;
-- si el último intento falló, la línea cambia a rojo con «\*\*\* ERROR \*\*\*», el mensaje concreto del error y la sugerencia de volver a ejecutar `Instalar_FTP.bat` para corregirlo.
+**Cargas al servidor (FTP y DB)** [v1.9]
 
-> `Cargador_DB.ps1` ya escribe el mismo tipo de archivo de estado (`Root\db_status.json`, sección 10.2), pero la consola todavía no muestra una línea equivalente para él — pendiente, ver sección 10.5.
+Bloque «CARGAS AL SERVIDOR» con una línea por cargador (`FTP` y `DB`), para ver de un vistazo cómo va todo. La consola no se conecta ni al FTP ni a la API: solo comprueba si existe la configuración del componente (`config\ftp.json` / `config\db_api.json`) y lee el archivo de estado que escribe cada cargador (`Root\ftp_status.json` / `Root\db_status.json`, ver 9.3 y 10.2).
+
+| Situación | Qué muestra |
+|---|---|
+| No existe el archivo de configuración | gris: `NO CONFIGURADO` — «La carga FTP no está configurada» / «La carga al servidor DB no está configurada», con el BAT que la habilita (`Instalar_FTP.bat` / `Instalar_DB.bat`) |
+| Configuración sin datos obligatorios (`host` en FTP; `apiUrl` o `token` en DB) | amarillo: `CONFIGURACIÓN INCOMPLETA` y el BAT para completarla |
+| Configurada pero todavía sin archivo de estado | amarillo: `SIN EJECUTAR` y el nombre de la tarea programada que debe correr |
+| Última ejecución correcta | verde `OK`, **última carga** (hora; fecha y hora si no fue hoy) y hace cuánto, **próxima** carga y en cuánto falta; debajo, en gris, archivos subidos (FTP) o sincronizados y filas nuevas/actualizadas (DB) |
+| Última ejecución fallida | rojo «\*\*\* ERROR \*\*\*», hora del último intento, próxima, el mensaje concreto del error y la sugerencia de volver a ejecutar el BAT del componente |
+| La hora prevista ya pasó | hasta 15 min: «Próxima: en breve»; más de 15 min: amarillo «ATRASADA desde …» y aviso de verificar la tarea programada (`MRV1 FTP` / `MRV1 DB`) |
+
+- Si el archivo de configuración existe pero no se puede leer (permisos), se da por configurado y decide el archivo de estado.
+- Un `*_status.json` que quedó de una instalación anterior no engaña: si la configuración ya no existe (componente desinstalado), se muestra `NO CONFIGURADO`.
+
+```text
+CARGAS AL SERVIDOR
+  FTP  OK   Última carga: 10:28:58 (hace 00:40:01)   Próxima: 12:28:58 (en 01:19:59)
+         Archivos subidos: 3 (días anteriores 1 + hoy 2)
+  DB   NO CONFIGURADO   La carga al servidor DB no está configurada (ejecute Instalar_DB.bat para habilitarla).
+```
 
 **Abajo (historial)**
 - **todos los cambios de estado del día que estén disponibles** (sin tope), del más reciente al más antiguo, con el destino indicado (unificados si hay varios). El buffer de la consola se agranda al abrir (hasta ~3000 líneas) para que un día con muchas caídas no rompa el redibujado; si la lista no cabe en la ventana visible, se recorre con la barra de desplazamiento.
@@ -491,7 +529,7 @@ La consola muestra:
 **Colores:** verde = OK, rojo = ERROR, amarillo = EVENTO, cian = INICIO, gris = INCOMPLETO.
 
 ```text
-MONITOR DE RED MR V1.0        PC-01 · Profesor1 · Wi-Fi 192.168.1.103        Actualizado 22:35:10
+MONITOR DE RED MR V1.0   ·   LABORATORIO 2 - EDIFICIO A     PC-01 · Profesor1 · Wi-Fi 192.168.1.103        Actualizado 22:35:10
 Sesión desde 07:00:00 (15:35:10)
 
 DESTINO 1: 8.8.8.8      ESTADO: OK  desde 22:33:10 (00:02:00)
@@ -542,7 +580,7 @@ logs\cargados\
 - Reintentos controlados ante fallo; el archivo queda disponible para el siguiente intento. No se pierde información ni se borran registros pendientes.
 - Si el servidor está apagado, sin conexión, temporalmente inaccesible o rechaza la transferencia, el monitor sigue funcionando normalmente.
 - Log del cargador (`ftp_worker.log`), con rotación por tamaño.
-- En el servidor, los archivos van en una carpeta con el nombre del PC (`remoteDir`, por defecto `/<PC>/`, propuesto siempre por el asistente); el cargador la crea automáticamente si no existe. Un `remoteDir` guardado como `/` (raíz) no se respeta como configuración real: se trata como si no se hubiera fijado nunca y se vuelve a proponer `/<PC>/`.
+- En el servidor, los archivos van en una carpeta con el **alias** de la PC (ver 4.3); el cargador la crea automáticamente si no existe. `ftp_status.json` incluye `remoteDir` y la consola la muestra en la línea de detalle del FTP.
 
 ### 9.3 Verificación de conexión y estado visible
 
@@ -570,7 +608,7 @@ El envío es por **filas**, no por archivo: cada fila del CSV se traduce a un ob
 - `config\db_api.json` (ver 4.8) — URL de la API, token, alias del PC, frecuencia y reintentos. Separado de los scripts, no se pisa al reinstalar.
 - El **alias** (nombre descriptivo del punto observado) se envía en **cada** carga, no solo cuando cambia — así el servidor lo mantiene al día solo, sin pasos manuales, y el primer envío fallido tras instalar se autocorrige en la siguiente corrida.
 - Log propio: `diag\db_worker.log` (misma rotación por tamaño que `ftp_worker.log`).
-- Estado propio para la consola: `Root\db_status.json` (última corrida, archivos sincronizados/fallidos, filas insertadas/actualizadas, próxima hora estimada) — mismo patrón que `ftp_status.json` (ver 10.5).
+- Estado propio para la consola: `Root\db_status.json` (última corrida, archivos sincronizados/fallidos, filas insertadas/actualizadas, próxima hora estimada) — mismo patrón que `ftp_status.json`; la consola lo muestra en el bloque «CARGAS AL SERVIDOR» (ver 8).
 
 ### 10.3 Backend (API + base de datos)
 
@@ -580,6 +618,7 @@ Resumen:
 
 - **Base de datos MySQL** — tablas `computadoras` (PC → alias) y `registros` (una fila por evento del CSV), con una clave única que permite el `UPSERT` (una fila que se abre y luego se cierra se actualiza sola, sin duplicarse).
 - **API (PHP)** — un único endpoint, `POST registros.php`, que valida el token, valida cada fila, y hace upsert de `computadoras` y `registros` en una transacción.
+- **Formulario de análisis [v1.10]** — `index.php`, en la raíz del mismo subdominio; solo lee la base de datos (sección 10.5).
 
 ### 10.4 Seguridad
 
@@ -587,10 +626,19 @@ Resumen:
 - Token único y global (no uno por PC), para simplificar la configuración: el mismo valor vive en el `config.php` del servidor y en el `db_api.json` de cada PC.
 - **El token y la URL de fábrica que trae `Instalar_DB.ps1` deben actualizarse antes de distribuir el paquete** a otras PC o a otro cliente — no deben quedar apuntando al servidor/token de otra instalación.
 
-### 10.5 Pendiente
+### 10.5 Formulario de análisis semanal [v1.10]
 
-- La consola (`Monitor_Red_Console.ps1`) todavía no muestra una línea de estado para el cargador de la API (equivalente a la de FTP en 8), aunque `db_status.json` ya existe con la misma información.
-- El formulario de extracción (elegir rango de fechas y PC/ubicaciones) y el generador del reporte HTML descargable — la razón de ser de toda esta capa — todavía no están construidos. Documentación de diseño: `backend/IA.md`.
+`backend/api/index.php`, publicado en la raíz del subdominio de la API (`https://mrv1.solucionesnicaragua.com/`). Página de una sola vista (SPA) que **solo lee** la base de datos. Detalle completo (endpoints, reglas de cálculo, control de acceso): `backend/IA.md` sección 5.
+
+- **Filtros:** semana (lunes a domingo, por defecto la actual), días (Lun–Vie por defecto), horario del eje horizontal (07:00–15:00 por defecto) y máquinas con registros en esa semana (eje vertical; todas marcadas por defecto).
+- **Gráfico:** un bloque por día, una franja por máquina y una fila por destino (varios destinos, uno encima del otro). Verde tenue = conectado con registros; rojo = sin conexión; blanco = sin datos; azul = eventos de red e inicios del monitor. A la derecha, el tiempo desconectado dentro del horario y la cantidad de caídas; al final, un resumen de la semana con disponibilidad.
+- **Coincidencias:** franja naranja donde 2 o más máquinas distintas están sin conexión al mismo tiempo (tolerancia 5 s) — ayuda a ubicar el problema en la red común.
+- **Filtro por red (Cable / Wi-Fi):** botones dentro del reporte; **Wi-Fi oculto por defecto** para no mezclar caídas de señal inalámbrica. La red de cada tramo sale del `INICIO` (tercer campo del mensaje) y de los `EVENTO` «Cambio de adaptador» (5.6, 5.7). Con Wi-Fi visible, sus tramos se ven bandeados.
+- **«✓ Sin caídas»** solo si hay registros de conexión durante todo el horario, sin ningún ERROR.
+- **Descargar HTML:** un solo archivo autocontenido (datos + gráfico + botones Cable/Wi-Fi), sin conexión a internet, para compartir por correo.
+- **Acceso:** clave opcional en `config.php` del servidor (`'reporte' => ['clave' => '…']`); sin ella la página queda abierta y lo advierte.
+
+Pendiente: probar con datos reales de varias PC y dejar configurada la clave de acceso en producción.
 
 ---
 
@@ -652,6 +700,7 @@ Una versión es correcta si cumple como mínimo:
 - [ ] La consola no hace ping ni guarda información.
 - [ ] Cerrar la consola no detiene el monitor.
 - [ ] La consola avisa cuando el monitor no está activo.
+- [ ] La consola muestra, para FTP y DB, si la carga está configurada o no, la última carga, si fue correcta y la próxima ejecución.
 
 **FTP**
 - [ ] El FTP funciona independientemente.
@@ -667,6 +716,12 @@ Una versión es correcta si cumple como mínimo:
 - [ ] El alias del PC se refleja en el servidor tras el primer envío.
 - [ ] Existen logs del cargador de la API.
 - [ ] Un fallo de la API no detiene el monitoreo ni al FTP.
+
+**Formulario de análisis (servidor) [v1.10]**
+- [ ] Lista solo las máquinas con registros en la semana elegida.
+- [ ] El gráfico muestra un destino por fila, las caídas en rojo y la suma desconectada dentro del horario.
+- [ ] Marca en naranja las caídas simultáneas de 2 o más máquinas.
+- [ ] Los botones Cable / Wi-Fi funcionan en la página y en el HTML descargado.
 
 ---
 
@@ -686,40 +741,42 @@ Una versión es correcta si cumple como mínimo:
 
 ---
 
-## 14. Archivos del paquete (versión 1.8)
+## 14. Archivos del paquete (versión 1.10)
+
+Ver la estructura completa en 3.3. Resumen:
 
 ```text
-MRV1.8\
-    MRV1.8.md                    Esta guía (misma versión y nombre que el paquete)
-    Monitor_Red.ps1              Monitor: ping, estados, CSV, status.json, red local, cambio de día
-    Monitor_Red_Console.ps1      Consola de solo lectura (Abrir_Consola.bat)
-    Cargador_FTP.ps1             Cargador FTP (días cerrados + copia del día en curso)
-    Cargador_DB.ps1              Cargador a la API de análisis, opcional (sección 10)
-    Instalar_Monitor.ps1 / .bat  Asistente del monitor; al final ofrece instalar FTP y API de análisis
-    Instalar_FTP.ps1 / .bat      Asistente del Cargador FTP
-    Instalar_DB.ps1 / .bat       Asistente del Cargador de la API de análisis
-    Abrir_Consola.bat            Lanzador de la consola
-    Desinstalar_Monitor.bat      Quita tarea, scripts, monitor.json, acceso directo y copias auxiliares
-    Desinstalar_FTP.bat          Quita tarea, script y ftp.json (con credenciales)
-    Desinstalar_DB.bat           Quita tarea, script y db_api.json (con el token)
-    config\ftp.json              Config FTP de fábrica (host, usuario, contraseña, puerto)
-    config\db_api.example.json   Plantilla de config\db_api.json (sin credenciales reales de fábrica)
-    backend\                     API + base de datos del servidor — NO se instala en la PC del cliente
-                                  (ver 3.3 y 10.3; documentación propia en backend/README.md y backend/IA.md)
+MRV1\                         Raíz del paquete / repositorio (solo lo que usa una persona)
+    Instalar_Monitor.bat       Instalador principal (al final ofrece instalar FTP y DB)
+    Desinstalar_Monitor.bat    Desinstalador principal (pregunta si quita también FTP y DB)
+    Abrir_Consola.bat          Abre la consola
+    README.md, LICENSE         Presentación del repositorio (GitHub)
+    backend\                   API + base de datos del servidor (sección 10.3) — vive en el
+                               mismo repositorio para mantener todo junto, pero NINGÚN
+                               instalador de MRV1 la copia ni la toca en la PC del cliente.
+        README.md, IA.md
+        sql\001_crear_base.sql
+        api\index.php (formulario de análisis [v1.10]), registros.php, lib\, config\
+    sistema\                   Todo lo demás [v1.9]
+        MRV1.10.md             Esta guía
+        Monitor_Red.ps1, Monitor_Red_Console.ps1, Cargador_FTP.ps1, Cargador_DB.ps1
+        Instalar_Monitor.ps1, Instalar_FTP.ps1 / .bat, Instalar_DB.ps1 / .bat
+        Desinstalar_FTP.bat, Desinstalar_DB.bat
+        config\ftp.json, config\db_api.json (referencia; los asistentes no los leen)
 ```
 
 Notas:
 
 - Los `.ps1` y `.bat` están en CRLF (final de línea de Windows) y los `.ps1` se leen como UTF-8 con BOM; guardar cualquier edición manteniendo esa codificación.
-- Cada `Instalar_*.bat` invoca a su asistente `.ps1` correspondiente (mismo nombre, misma carpeta) con `powershell -NoProfile -ExecutionPolicy Bypass -File`, así que cada par `.ps1`/`.bat` debe copiarse junto con los cuatro scripts del sistema (`Monitor_Red.ps1`, `Monitor_Red_Console.ps1`, `Cargador_FTP.ps1`, `Cargador_DB.ps1`), que los asistentes copian solos a `bin\`.
+- Cada `Instalar_*.bat` invoca a su asistente `.ps1` correspondiente (mismo nombre, misma carpeta; excepción: `Instalar_Monitor.bat` de la raíz lo busca en `sistema\`) con `powershell -NoProfile -ExecutionPolicy Bypass -File`, así que cada par `.ps1`/`.bat` debe copiarse junto con los cuatro scripts del sistema (`Monitor_Red.ps1`, `Monitor_Red_Console.ps1`, `Cargador_FTP.ps1`, `Cargador_DB.ps1`), que los asistentes copian solos a `bin\`.
 
 ### Lista de pruebas sugerida
 
-1. **Instalación limpia**: ejecutar `Instalar_Monitor.bat` en una carpeta vacía de `C:\ProgramData\MRV1`, con 2 destinos (uno que responda y uno que no). Confirmar que la tarea `MRV1 Monitor` queda en ejecución, que aparecen los CSV con las filas `INICIO` y `OK`/`ERROR` esperadas, que `C:\ProgramData\MRV1` (raíz) contiene también los desinstaladores, `Abrir_Consola.bat` y los instaladores de los tres componentes, y que aparece el acceso directo en el escritorio.
+1. **Instalación limpia**: ejecutar `Instalar_Monitor.bat` (raíz del paquete) en una carpeta vacía de `C:\ProgramData\MRV1`, con 2 destinos (uno que responda y uno que no). Confirmar que la tarea `MRV1 Monitor` queda en ejecución, que aparecen los CSV con las filas `INICIO` y `OK`/`ERROR` esperadas, que `C:\ProgramData\MRV1` (raíz) contiene también los desinstaladores, `Abrir_Consola.bat` y los instaladores de los tres componentes, y que aparece el acceso directo en el escritorio.
 2. **Reinstalación**: volver a ejecutar `Instalar_Monitor.bat` desde la copia en `C:\ProgramData\MRV1`, cambiar el intervalo de un destino. Confirmar que el monitor se detiene y reinicia solo, sin perder los CSV existentes.
-3. **Consola**: ejecutar `Abrir_Consola.bat` mientras el monitor corre, con más de un destino configurado; verificar un bloque `DESTINO n` por cada uno. Provocar una caída y verificar que el estado, los totales y la lista de cambios de hoy se actualizan en vivo con los colores esperados. Cerrar la consola y confirmar que el monitor sigue.
+3. **Consola**: ejecutar `Abrir_Consola.bat` mientras el monitor corre, con más de un destino configurado; verificar un bloque `DESTINO n` por cada uno. Provocar una caída y verificar que el estado, los totales y la lista de cambios de hoy se actualizan en vivo con los colores esperados. Cerrar la consola y confirmar que el monitor sigue. Verificar el bloque «CARGAS AL SERVIDOR»: sin `ftp.json`/`db_api.json` muestra `NO CONFIGURADO` en cada uno; tras instalar FTP/DB muestra `OK` con última carga y próxima, o `*** ERROR ***` con el mensaje si la conexión falla.
 4. **Apagado y arranque**: reiniciar Windows con el monitor en marcha; verificar que no aparece ningún evento `APAGADO`, que el estado abierto se cerró (o quedó `[INCOMPLETO]` si el apagado fue forzado) y que hay un nuevo `INICIO` tras el arranque.
-5. **FTP**: ejecutar `Instalar_FTP.bat` presionando solo Enter en cada pregunta. Confirmar que la carpeta remota propuesta es el nombre de la PC, que el instalador muestra «CONEXIÓN FTP CORRECTA» y cuántos archivos subió, y que en el servidor el archivo de hoy quedó en esa carpeta. Esperar a que la tarea corra sola y, al pasar la medianoche, confirmar que el archivo del día anterior aparece en `logs\cargados\` local y en el servidor.
-6. **API de análisis**: ejecutar `Instalar_DB.bat` presionando solo Enter en cada pregunta. Confirmar que el instalador muestra «ENVÍO A LA API CORRECTO» con filas insertadas, y que las filas aparecen en la base de datos. Repetir la corrida y confirmar que no se duplican (deduplicación por upsert).
+5. **FTP**: ejecutar `Instalar_FTP.bat` presionando solo Enter en cada pregunta. Confirmar que el asistente ya no pregunta la carpeta remota y muestra la del alias, que el instalador muestra «CONEXIÓN FTP CORRECTA» y cuántos archivos subió, y que en el servidor el archivo de hoy quedó en esa carpeta. Esperar a que la tarea corra sola y, al pasar la medianoche, confirmar que el archivo del día anterior aparece en `logs\cargados\` local y en el servidor.
+6. **API de análisis**: ejecutar `Instalar_DB.bat` presionando solo Enter en cada pregunta. Confirmar que el instalador muestra «ENVÍO A LA API CORRECTO» con filas insertadas, y que las filas aparecen en la base de datos. Repetir la corrida y confirmar que no se duplican (deduplicación por upsert). Abrir `https://mrv1.solucionesnicaragua.com/`, elegir la semana y confirmar que la PC aparece en la lista de máquinas y que el gráfico y la descarga HTML funcionan.
 7. **Archivo bloqueado**: abrir un CSV activo en Excel mientras el monitor sigue corriendo; provocar un cambio de estado y confirmar que, al cerrar Excel, la fila pendiente se completa sin perder datos.
 8. **Desinstalación**: ejecutar `Desinstalar_Monitor.bat`, `Desinstalar_FTP.bat` y `Desinstalar_DB.bat`; confirmar que las tareas desaparecen, que `logs\` y `logs\cargados\` permanecen intactos, y que desaparecen el acceso directo del escritorio y las copias de los BAT en `C:\ProgramData\MRV1`.

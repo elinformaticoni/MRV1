@@ -29,6 +29,7 @@ ini_set('display_errors', '0');
 const MR_MAX_DIAS_RANGO   = 31;      // rango máximo por consulta (la SPA pide 7)
 const MR_MAX_PCS_CONSULTA = 100;     // máquinas por consulta de datos
 const MR_MAX_FILAS        = 200000;  // tope de filas por consulta de datos
+const MR_URL_PAQUETE      = 'https://github.com/elinformaticoni/MRV1/archive/refs/heads/main.zip'; // instalador del monitor
 
 $cfg         = mr_config();
 $claveRep    = (string) ($cfg['reporte']['clave'] ?? '');
@@ -249,7 +250,7 @@ header('X-Frame-Options: SAMEORIGIN');
 :root{
   --bg:#f4f6f8; --panel:#ffffff; --texto:#1f2933; --suave:#5f6b7a; --tenue:#8a95a3;
   --borde:#dde3ea; --grid:#e8edf2; --acento:#0f6cbd; --acento-t:#ffffff;
-  --ok:rgba(22,163,74,.20); --err:#d92d20; --inc:#9aa4b1; --wifi:#2f6fde; --cable:#7a4cc2; --sinred:#b8c0ca;
+  --ok:rgba(22,163,74,.16); --ok-wifi:rgba(22,163,74,.38); --err:#d92d20; --inc:#9aa4b1; --wifi:#2f6fde; --cable:#7a4cc2; --sinred:#b8c0ca;
   --ev:#2563eb; --ini:#60a5fa; --coin:rgba(234,88,12,.16); --coin-borde:rgba(234,88,12,.75); --verde:#16a34a; --banda-ok:rgba(22,163,74,.09); --banda-ok-borde:rgba(22,163,74,.35);
   --pista:#f8fafc; --sombra:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
   color-scheme:light;
@@ -258,7 +259,7 @@ header('X-Frame-Options: SAMEORIGIN');
   :root:not([data-theme="light"]){
     --bg:#11161c; --panel:#1a2129; --texto:#e6ebf0; --suave:#a9b4c0; --tenue:#7b8794;
     --borde:#2c3642; --grid:#27313c; --acento:#4c9be8; --acento-t:#0b1520;
-    --ok:rgba(50,213,131,.20); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
+    --ok:rgba(50,213,131,.10); --ok-wifi:rgba(50,213,131,.26); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
     --ev:#5b8def; --ini:#93b8f5; --coin:rgba(251,146,60,.16); --coin-borde:rgba(251,146,60,.8); --verde:#32d583; --banda-ok:rgba(50,213,131,.08); --banda-ok-borde:rgba(50,213,131,.35);
     --pista:#151b22; --sombra:none; color-scheme:dark;
   }
@@ -266,7 +267,7 @@ header('X-Frame-Options: SAMEORIGIN');
 :root[data-theme="dark"]{
   --bg:#11161c; --panel:#1a2129; --texto:#e6ebf0; --suave:#a9b4c0; --tenue:#7b8794;
   --borde:#2c3642; --grid:#27313c; --acento:#4c9be8; --acento-t:#0b1520;
-  --ok:rgba(50,213,131,.20); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
+  --ok:rgba(50,213,131,.10); --ok-wifi:rgba(50,213,131,.26); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
   --ev:#5b8def; --ini:#93b8f5; --coin:rgba(251,146,60,.16); --coin-borde:rgba(251,146,60,.8); --verde:#32d583; --banda-ok:rgba(50,213,131,.08); --banda-ok-borde:rgba(50,213,131,.35);
   --pista:#151b22; --sombra:none; color-scheme:dark;
 }
@@ -281,6 +282,9 @@ button,select,input{font:inherit;color:inherit}
 .barra .sub{color:var(--suave);font-size:13px}
 .barra .der{margin-left:auto;display:flex;gap:10px;align-items:center}
 .barra a{color:var(--suave);font-size:13px}
+.descarga{text-align:center}
+.btn.descargar-mon{display:block;text-decoration:none;background:#15803d;border-color:#15803d;color:#fff;font-weight:700;letter-spacing:.5px;padding:10px 16px}
+.btn.descargar-mon:hover{background:#166534;border-color:#166534}
 .aviso{background:#fff7e6;border:1px solid #f5c26b;color:#7a4b00;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .aviso{background:#2b2210;border-color:#6b5217;color:#f3d38b}}
 .panel{background:var(--panel);border:1px solid var(--borde);border-radius:10px;box-shadow:var(--sombra);padding:14px 16px;margin-bottom:14px}
@@ -362,7 +366,14 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 .mr-seg{position:absolute;top:0;bottom:0}
 .mr-seg.ok{background:var(--ok)}
 .mr-seg.err{background:var(--err);min-width:2px;z-index:2}
-.mr-seg.abierto{opacity:.55;background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.55) 0 3px,transparent 3px 6px)}
+.mr-seg.abierto{opacity:.45}
+.mr-seg.ok.wifi{background:repeating-linear-gradient(135deg,var(--ok-wifi) 0 3px,transparent 3px 6px)}
+.mr-seg.err.wifi{background:repeating-linear-gradient(135deg,var(--err) 0 3px,color-mix(in srgb,var(--err) 35%,transparent) 3px 6px)}
+.mr-redes{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:auto;font-size:12px;color:var(--suave)}
+.mr-red-btn{font:inherit;border:1px solid var(--borde);background:transparent;color:var(--suave);border-radius:999px;padding:3px 11px;cursor:pointer}
+.mr-red-btn.on{border-color:var(--acento);background:color-mix(in srgb,var(--acento) 16%,transparent);color:var(--texto);font-weight:600}
+.mr-red-btn:focus-visible{outline:2px solid var(--acento);outline-offset:2px}
+.mr-red-nota{color:var(--tenue)}
 .mr-marca{position:absolute;top:-1px;bottom:-1px;width:2px;margin-left:-1px;z-index:3}
 .mr-marca.ev{background:var(--ev)}
 .mr-marca.ini{background:var(--ini)}
@@ -401,13 +412,18 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       <button class="btn prim" type="submit" style="width:100%">Entrar</button>
     </form>
   </div>
+  <div class="panel descarga">
+    <p class="estado" style="margin:0 0 10px">¿Solo necesita instalar el monitor en una PC?</p>
+    <a class="btn descargar-mon" href="<?= $h(MR_URL_PAQUETE) ?>" rel="noopener">⬇ DESCARGA EL MONITOR</a>
+    <p class="estado" style="margin:10px 0 0;font-size:12px">Paquete MRV1 (ZIP desde GitHub). Descomprima y ejecute <code>Instalar_Monitor.bat</code> como administrador.</p>
+  </div>
 </div>
 <?php else: ?>
 <div class="app">
   <div class="barra">
     <h1>Monitor de Red · Análisis semanal</h1>
     <span class="sub">Caídas de conectividad por máquina y destino</span>
-    <div class="der"><?php if ($requiereLog): ?><a href="?salir=1">Cerrar sesión</a><?php endif; ?></div>
+    <div class="der"><a href="<?= $h(MR_URL_PAQUETE) ?>" rel="noopener" title="Paquete MRV1 (ZIP desde GitHub)">⬇ Descargar el monitor</a><?php if ($requiereLog): ?><a href="?salir=1">Cerrar sesión</a><?php endif; ?></div>
   </div>
   <?php if (!$requiereLog): ?>
   <div class="aviso">Acceso sin clave: cualquiera que abra esta dirección puede ver los registros. Para protegerla, agregue <code>'reporte' => ['clave' => '…']</code> en <code>config/config.php</code>.</div>
@@ -565,7 +581,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
         if (b > a) res.push({ a: a, b: b, nombre: t.nombre, tipo: t.tipo });
       });
     });
-    return res;
+    return res.sort(function (x, y) { return x.a - y.a; });
   }
 
   function unir(intervalos) {
@@ -579,9 +595,9 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 
   /* Prepara todo lo necesario para dibujar: por día → máquina → destino. */
   function preparar(datos, opc) {
-    var ahora = opc.ahora || null, ini = opc.ini, fin = opc.fin;
+    var ahora = opc.ahora || null, ini = opc.ini, fin = opc.fin, redes = opc.redes;
     var porDia = {};
-    opc.dias.forEach(function (d) { porDia[d] = { fecha: d, maquinas: [], errTotal: 0, caidas: 0, hayDatos: false }; });
+    opc.dias.forEach(function (d) { porDia[d] = { fecha: d, maquinas: [], errTotal: 0, caidas: 0, oculto: 0, hayDatos: false }; });
 
     datos.maquinas.forEach(function (m) {
       var filasPorDia = {};
@@ -594,31 +610,80 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       });
       opc.dias.forEach(function (d) {
         var dia = porDia[d], fd = filasPorDia[d] || {};
-        var maq = { pc: m.pc, alias: m.alias, destinos: [], adapt: [], hayDatos: false };
-        var todas = [], cobertura = [];
+        var maq = { pc: m.pc, alias: m.alias, destinos: [], adapt: [], hayDatos: false, caidas: 0, completa: false };
+        var todas = [], cobertura = [], crudos = [];
         m.destinos.forEach(function (de) {
           var filas = fd[de.destino] || [];
           var r = segmentosDia(filas, d, ahora);
-          var err = 0, ok = 0, caidas = 0;
-          r.segs.forEach(function (sg) {
-            var a = Math.max(sg.a, ini), b = Math.min(sg.b, fin);
-            cobertura.push({ a: sg.a, b: sg.b });
-            if (b <= a || sg.abierto) return;
-            if (sg.tipo === 'ERROR') { err += b - a; caidas++; }
-            else if (sg.tipo === 'OK') ok += b - a;
-          });
+          r.segs.forEach(function (sg) { cobertura.push({ a: sg.a, b: sg.b }); });
           filas.forEach(function (f) { todas.push(f); });
-          var tieneDatos = filas.length > 0;
-          if (tieneDatos) maq.hayDatos = true;
-          maq.destinos.push({ destino: de.destino, segs: r.segs, marcas: r.marcas, err: err, ok: ok, caidas: caidas, hayDatos: tieneDatos });
-          dia.errTotal += err; dia.caidas += caidas;
+          crudos.push({ destino: de.destino, filas: filas, r: r });
         });
-        if (maq.hayDatos) dia.hayDatos = true;
         maq.adapt = adaptadoresDia(todas, unir(cobertura));
+        var completa = crudos.length > 0;
+        crudos.forEach(function (c) {
+          var piezas = [], err = 0, ok = 0, oculto = 0, cuentan = {}, cubierto = [];
+          c.r.segs.forEach(function (sg, idx) {
+            partirPorRed(sg, maq.adapt).forEach(function (pz) {
+              pz.idx = idx;
+              pz.visible = redVisible(pz.red, redes);
+              piezas.push(pz);
+              var a = Math.max(pz.a, ini), b = Math.min(pz.b, fin);
+              if (b <= a || pz.tipo === 'INC') return;
+              if (!pz.visible) { oculto += b - a; return; }
+              if (pz.abierto) return;
+              cubierto.push({ a: a, b: b });
+              if (pz.tipo === 'ERROR') { err += b - a; cuentan[idx] = true; }
+              else if (pz.tipo === 'OK') ok += b - a;
+            });
+          });
+          var caidas = Object.keys(cuentan).length;
+          var tieneDatos = c.filas.length > 0;
+          var visibles = piezas.some(function (pz) { return pz.visible && pz.tipo !== 'INC'; });
+          var cub = unir(cubierto).reduce(function (t, x) { return t + x.b - x.a; }, 0);
+          if (!(tieneDatos && caidas === 0 && cub >= (fin - ini) - HOLGURA)) completa = false;
+          if (tieneDatos) maq.hayDatos = true;
+          maq.caidas += caidas;
+          maq.destinos.push({ destino: c.destino, segs: piezas, marcas: c.r.marcas, err: err, ok: ok, caidas: caidas,
+            hayDatos: tieneDatos, oculto: oculto, soloOculto: tieneDatos && !visibles && oculto > 0 });
+          dia.errTotal += err; dia.caidas += caidas; dia.oculto += oculto;
+        });
+        maq.completa = completa;
+        if (maq.hayDatos) dia.hayDatos = true;
         dia.maquinas.push(maq);
       });
     });
     return opc.dias.map(function (d) { var x = porDia[d]; x.coin = coincidencias(x.maquinas, ini, fin); return x; });
+  }
+
+  /* Margen para considerar que un destino tuvo registros durante TODO el horario
+     (arranque del monitor unos segundos después de la hora de inicio, etc.). */
+  var HOLGURA = 60;
+
+  function redVisible(red, redes) {
+    if (red === 'wifi') return !!redes.wifi;
+    if (red === 'cable') return !!redes.cable;
+    return true; // red desconocida: siempre visible
+  }
+
+  /* Parte un segmento según los tramos de adaptador (Wi-Fi / cable) de la máquina. */
+  function partirPorRed(sg, tramos) {
+    var out = [], cur = sg.a;
+    function pieza(a, b, red) {
+      if (b <= a) return;
+      var p = {}; for (var k in sg) p[k] = sg[k];
+      p.a = a; p.b = b; p.red = red; out.push(p);
+    }
+    tramos.forEach(function (t) {
+      if (t.b <= cur || t.a >= sg.b) return;
+      if (t.a > cur) pieza(cur, t.a, null);
+      var b = Math.min(t.b, sg.b);
+      pieza(Math.max(t.a, cur), b, t.tipo === 'wifi' || t.tipo === 'cable' ? t.tipo : null);
+      cur = b;
+    });
+    pieza(cur, sg.b, null);
+    if (!out.length) pieza(sg.a, sg.b, null);
+    return out;
   }
 
   function adaptadorEn(tramos, s) {
@@ -636,7 +701,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       var iv = [];
       m.destinos.forEach(function (de) {
         de.segs.forEach(function (sg) {
-          if (sg.tipo !== 'ERROR') return;
+          if (sg.tipo !== 'ERROR' || !sg.visible) return;
           var a = Math.max(sg.a - TOL, ini), b = Math.min(sg.b + TOL, fin);
           if (b > a) iv.push({ a: a, b: b });
         });
@@ -703,7 +768,9 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     var cab = el('div', 'mr-dia-cab');
     cab.appendChild(el('h3', null, fechaLarga(dia.fecha)));
     if (!dia.hayDatos) cab.appendChild(el('span', 'mr-badge', 'Sin registros'));
-    else if (dia.caidas === 0) { cab.appendChild(el('span', 'mr-badge ok', '✓ Sin caídas en el horario')); }
+    else if (dia.caidas === 0) {
+      if (dia.maquinas.every(function (m) { return m.completa; })) cab.appendChild(el('span', 'mr-badge ok', '✓ Sin caídas en el horario'));
+    }
     else cab.appendChild(el('span', 'mr-badge err', dia.caidas + (dia.caidas === 1 ? ' caída' : ' caídas') + ' · ' + dur(dia.errTotal) + ' desconectado (suma)'));
     if (opc.coincidencias && dia.coin.length) {
       var tc = dia.coin.reduce(function (t, c) { return t + c.b - c.a; }, 0);
@@ -723,7 +790,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
         capa.appendChild(b);
         var tk = el('div', 'mr-coin-tk'); colocar(tk, c.a, c.b, ini, fin);
         tk.setAttribute('data-tip', 'Coincidencia · ' + hhmmss(c.a) + ' – ' + hhmmss(c.b) + ' (' + durTexto(c.b - c.a) + ')\n' +
-          c.maquinas.length + ' máquinas sin conexión a la vez:\n• ' + c.maquinas.join('\n• '));
+          c.maquinas.length + ' de ' + dia.maquinas.filter(function (m) { return m.hayDatos; }).length + ' máquinas sin conexión a la vez:\n• ' + c.maquinas.join('\n• '));
         pe.appendChild(tk);
       });
       cuerpo.insertBefore(capa, cuerpo.firstChild);
@@ -731,12 +798,10 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 
     dia.maquinas.forEach(function (m) {
       var bloque = el('div', 'mr-maq');
-      var errMaq = 0, caidasMaq = 0;
-      m.destinos.forEach(function (de) { errMaq += de.err; caidasMaq += de.caidas; });
       var nom = el('div', 'mr-maq-nom');
       nom.appendChild(el('span', null, m.alias || m.pc));
       if (m.alias && m.alias !== m.pc) nom.appendChild(el('small', null, m.pc));
-      if (m.hayDatos && caidasMaq === 0) nom.appendChild(el('small', 'ok', '✓ sin caídas'));
+      if (m.completa) nom.appendChild(el('small', 'ok', '✓ sin caídas'));
       bloque.appendChild(nom);
 
       if (!m.destinos.length) {
@@ -750,10 +815,11 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
         f.appendChild(lbl);
         var p = pista(ini, fin);
         if (!de.hayDatos) p.appendChild(el('div', 'mr-nodata', 'sin registros'));
+        else if (de.soloOculto) p.appendChild(el('div', 'mr-nodata', 'solo registros por Wi-Fi (ocultos)'));
         de.segs.forEach(function (sg) {
-          if (sg.tipo === 'INC') return; // estado desconocido (apagado abrupto): se deja en blanco
+          if (sg.tipo === 'INC' || !sg.visible) return; // sin datos / red oculta: en blanco
           var cls = sg.tipo === 'ERROR' ? 'err' : 'ok';
-          var s = el('div', 'mr-seg ' + cls + (sg.abierto ? ' abierto' : ''));
+          var s = el('div', 'mr-seg ' + cls + (sg.abierto ? ' abierto' : '') + (sg.red === 'wifi' ? ' wifi' : ''));
           if (!colocar(s, sg.a, sg.b, ini, fin)) return;
           var tip = de.destino + ' · ' + (sg.tipo === 'INC' ? 'Incompleto (' + (NOMBRE_TIPO[sg.orig] || sg.orig) + ', sin cierre)' : NOMBRE_TIPO[sg.tipo]) +
             '\n' + hhmmss(sg.a) + ' – ' + hhmmss(sg.b) + '  (' + durTexto(sg.b - sg.a) + ')';
@@ -761,7 +827,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
           if (sg.tipo === 'OK' && sg.lat) tip += '\nLatencia promedio: ' + sg.lat + ' ms';
           if (sg.msg) tip += '\n' + sg.msg;
           var ad = adaptadorEn(m.adapt, sg.a);
-          if (ad) tip += '\nRed: ' + (ad.tipo === 'wifi' ? 'Wi-Fi' : ad.tipo === 'cable' ? 'cable' : '') + ' (' + ad.nombre + ')';
+          tip += '\nRed: ' + (sg.red === 'wifi' ? 'Wi-Fi' : sg.red === 'cable' ? 'cable' : 'desconocida') + (ad ? ' (' + ad.nombre + ')' : '');
           s.setAttribute('data-tip', tip);
           p.appendChild(s);
         });
@@ -776,7 +842,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
         }
         f.appendChild(p);
         var tot = el('div', 'mr-tot ' + (de.err > 0 ? 'hay' : 'cero'));
-        if (!de.hayDatos) tot.textContent = '—';
+        if (!de.hayDatos || de.soloOculto) tot.textContent = '—';
         else {
           tot.textContent = dur(de.err);
           if (de.caidas) { tot.appendChild(document.createTextNode(' ')); tot.appendChild(el('small', null, '(' + de.caidas + ')')); }
@@ -807,7 +873,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
         var err = 0, ok = 0, caidas = 0, algun = false;
         dias.forEach(function (d) {
           var x = d.maquinas[mi].destinos[di];
-          if (!x.hayDatos) { r.appendChild(el('td', 'cero', '—')); return; }
+          if (!x.hayDatos || x.soloOculto) { r.appendChild(el('td', 'cero', '—')); return; }
           algun = true; err += x.err; ok += x.ok; caidas += x.caidas;
           r.appendChild(el('td', x.err ? 'hay' : 'cero', dur(x.err)));
         });
@@ -822,6 +888,27 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     return box;
   }
 
+  function barraRedes(datos, opc, raiz, dias) {
+    var b = el('div', 'mr-redes');
+    b.appendChild(el('span', null, 'Mostrar red:'));
+    [['cable', 'Cable'], ['wifi', 'Wi-Fi']].forEach(function (x) {
+      var on = !!opc.redes[x[0]];
+      var bt = el('button', 'mr-red-btn' + (on ? ' on' : ''), (on ? '✓ ' : '') + x[1]);
+      bt.type = 'button';
+      bt.setAttribute('aria-pressed', on ? 'true' : 'false');
+      bt.title = (on ? 'Ocultar' : 'Mostrar') + ' los registros tomados mientras la máquina usaba ' + x[1];
+      bt.onclick = function () { opc.redes[x[0]] = !on; render(datos, opc, raiz); };
+      b.appendChild(bt);
+    });
+    var oc = dias.reduce(function (t, d) { return t + d.oculto; }, 0);
+    if (oc > 0) {
+      var nt = el('span', 'mr-red-nota', 'Oculto: ' + durTexto(oc));
+      nt.title = 'Tiempo de registros ocultos por el filtro de red, dentro del horario (suma de todos los destinos y días).';
+      b.appendChild(nt);
+    }
+    return b;
+  }
+
   function leyenda(opc) {
     var l = el('div', 'mr-ley');
     function it(color, txt, cls) {
@@ -830,6 +917,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     }
     it('var(--ok)', 'Conectado');
     it('var(--err)', 'Sin conexión');
+    if (opc.redes.wifi) it('repeating-linear-gradient(135deg,var(--ok-wifi) 0 3px,transparent 3px 5px)', 'Por Wi-Fi (bandeado)');
     var sd = el('span'), isd = el('i'); isd.style.boxShadow = 'inset 0 0 0 1px var(--borde)'; sd.appendChild(isd); sd.appendChild(document.createTextNode('Sin datos')); l.appendChild(sd);
     if (opc.eventos) { it('var(--ev)', 'Evento de red', 'tk'); it('var(--ini)', 'Inicio del monitor', 'tk'); }
     if (opc.coincidencias) it('var(--coin)', 'Coincidencia (2+ máquinas caídas a la vez)');
@@ -860,11 +948,12 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     window.addEventListener('scroll', function () { tip.style.display = 'none'; }, { passive: true });
   }
 
-  /* opc: { dias:[fechas], ini:seg, fin:seg, coincidencias:bool, eventos:bool, vacias:bool,
+  /* opc: { dias:[fechas], ini:seg, fin:seg, coincidencias:bool, eventos:bool, redes:{cable,wifi}, vacias:bool,
             ahora:{fecha, s}, generado:'texto', titulo:'texto' } */
   function render(datos, opc, raiz) {
     raiz.textContent = '';
     raiz.classList.add('mr');
+    if (!opc.redes) opc.redes = { cable: true, wifi: false };
     var dias = preparar(datos, opc);
     if (!opc.vacias) dias = dias.filter(function (d) { return d.hayDatos; });
 
@@ -872,6 +961,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     cab.appendChild(el('h2', null, opc.titulo || 'Análisis de conectividad'));
     var nMaq = datos.maquinas.length;
     cab.appendChild(el('span', 'meta', 'Horario ' + hhmm(opc.ini) + '–' + hhmm(opc.fin) + ' · ' + nMaq + (nMaq === 1 ? ' máquina' : ' máquinas') + ' · ' + dias.length + (dias.length === 1 ? ' día' : ' días')));
+    cab.appendChild(barraRedes(datos, opc, raiz, dias));
     raiz.appendChild(cab);
     raiz.appendChild(leyenda(opc));
 
@@ -881,7 +971,9 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     dias.forEach(function (d) { raiz.appendChild(dibujarDia(d, opc)); });
     raiz.appendChild(dibujarResumen(dias, opc));
     raiz.appendChild(el('div', 'mr-pie', 'Tiempo desconectado = suma de estados ERROR cerrados dentro del horario, por destino. ' +
-      'Sin datos (en blanco) = sin registros o filas incompletas por apagado abrupto. El estado en curso no se suma. ' +
+      'Sin datos (en blanco) = sin registros, filas incompletas por apagado abrupto o red oculta (' +
+      (opc.redes.wifi ? '' : 'Wi-Fi') + (!opc.redes.wifi && !opc.redes.cable ? ' y ' : '') + (opc.redes.cable ? '' : 'cable') + (opc.redes.wifi && opc.redes.cable ? 'ninguna' : '') +
+      '). «Sin caídas» solo si hay registros de todo el horario. El estado en curso no se suma. ' +
       'Coincidencia = 2 o más máquinas sin conexión a la vez (tolerancia ' + TOL + ' s). ' + (opc.generado ? 'Generado: ' + opc.generado + '.' : '')));
     if (!raiz._mrTip) { instalarTooltip(raiz); raiz._mrTip = true; }
   }
@@ -913,7 +1005,8 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     lunes: lunesDe(hoyISO()),
     dias: [true, true, true, true, true, false, false],   // Lun–Vie por defecto
     ini: 7 * 3600, fin: 15 * 3600,                        // 7:00 a 15:00 por defecto
-    maquinas: [], seleccion: {}, datos: null, datosClave: ''
+    maquinas: [], seleccion: {}, datos: null, datosClave: '',
+    redes: { cable: true, wifi: false }   // Wi-Fi oculto por defecto (se cambia en el reporte)
   };
 
   // ---- Horario --------------------------------------------------------
@@ -1038,7 +1131,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     var n = new Date(), dms = sumar(estado.lunes, 6);
     return {
       dias: diasElegidos(), ini: estado.ini, fin: estado.fin,
-      coincidencias: $('optCoin').checked, eventos: $('optEventos').checked, vacias: $('optVacias').checked,
+      coincidencias: $('optCoin').checked, redes: estado.redes, eventos: $('optEventos').checked, vacias: $('optVacias').checked,
       ahora: { fecha: hoyISO(), s: n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds() },
       titulo: 'Semana ' + semanaISO(estado.lunes) + ' · ' + dm(estado.lunes) + ' al ' + dm(dms) + ' ' + parseISO(dms).getUTCFullYear(),
       generado: hoyISO() + ' ' + pad(n.getHours()) + ':' + pad(n.getMinutes())

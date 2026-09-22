@@ -1,6 +1,8 @@
 # Backend de análisis — Monitor de Red (MRV1 → MySQL)
 
-Ver `IA.md` en el proyecto de Claude para el contexto y las decisiones de diseño completas. Este README cubre solo la puesta en marcha de lo ya construido: la base de datos y la API de recepción.
+Estado (MRV1.10): base de datos, API de recepción y formulario de análisis semanal funcionando. En producción: `https://mrv1.solucionesnicaragua.com/` (formulario) y `https://mrv1.solucionesnicaragua.com/registros.php` (API).
+
+Contexto y decisiones de diseño completas: [`IA.md`](./IA.md). Lado cliente (`Cargador_DB.ps1`, instaladores): [`../sistema/MRV1.10.md`](../sistema/MRV1.10.md), sección 10. Este README cubre la puesta en marcha.
 
 ## 1. Crear la base de datos
 
@@ -14,7 +16,7 @@ Esto crea las tablas `computadoras` y `registros`. Es seguro volver a ejecutarlo
 
 ## 2. Configurar la API
 
-1. Sube la carpeta `api/` al hosting (por ejemplo a `/public_html/mrv1-api/` o donde prefieras).
+1. Sube el contenido de `api/` a la raíz del subdominio (en producción, la raíz de `mrv1.solucionesnicaragua.com`).
 2. Copia `api/config/config.example.php` como `api/config/config.php` (mismo directorio) y completa:
    - Credenciales de MySQL (host, nombre de la base, usuario, clave).
    - Un token propio, largo y aleatorio. Se puede generar así:
@@ -27,7 +29,7 @@ Esto crea las tablas `computadoras` y `registros`. Es seguro volver a ejecutarlo
 ## 3. Probar el endpoint
 
 ```bash
-curl -X POST "https://solucionesnicaragua.com/mrv1-api/registros.php" \
+curl -X POST "https://mrv1.solucionesnicaragua.com/registros.php" \
   -H "Content-Type: application/json" \
   -H "X-MR-Token: TU_TOKEN_AQUI" \
   -d '{
@@ -60,6 +62,15 @@ Para simular que una fila `OK` se "cierra" (como pasaría con la última fila de
    ```
    Sin esa entrada la página funciona igual, pero abierta a cualquiera (muestra un aviso).
 3. Elige semana, días (Lun–Vie por defecto), horario (07:00–15:00 por defecto) y máquinas → **Generar gráfico** → **Descargar HTML** para compartir el reporte.
+4. En el reporte, los botones **Cable / Wi-Fi** muestran u ocultan los registros según la red que usaba cada máquina (Wi-Fi oculto por defecto). Funcionan también en el HTML descargado.
+
+Qué muestra el gráfico: verde tenue = conectado, rojo = sin conexión, blanco = sin datos, azul = eventos e inicios, franja naranja = 2 o más máquinas caídas a la vez.
+
+## 5. Pendiente
+
+- Configurar `'reporte' => ['clave' => …]` en el `config.php` de producción.
+- Prueba de punta a punta con varias PC reales enviando datos a la vez.
+- Antes de distribuir el paquete a más PC: regenerar el token y actualizarlo en `config.php` y en `sistema/Instalar_DB.ps1` (ver `IA.md` sección 6).
 
 Detalle del gráfico y de los endpoints de consulta: `IA.md` sección 5.
 
@@ -67,7 +78,7 @@ Detalle del gráfico y de los endpoints de consulta: `IA.md` sección 5.
 
 ```
 backend/
-├── IA.md                        (vive en el proyecto de Claude, no aquí)
+├── IA.md                        Guía técnica del backend (contexto para IA)
 ├── README.md                    (este archivo)
 ├── .gitignore
 ├── sql/

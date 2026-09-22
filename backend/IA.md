@@ -2,19 +2,19 @@
 
 | | |
 |---|---|
-| Estado | Capa de análisis funcionando en producción (BD + API) y `Cargador_DB.ps1` integrado al instalador de MRV1 (paquete 1.8). Formulario de análisis semanal (`api/index.php`) construido — pendiente de desplegar y probar con datos reales. |
+| Estado | [v1.10] Capa de análisis funcionando en producción (BD + API) y `Cargador_DB.ps1` integrado al instalador de MRV1 (paquete 1.8). Formulario de análisis semanal (`api/index.php`) construido — pendiente de desplegar y probar con datos reales. |
 | Ubicación en el repositorio | `MRV1/backend/` — vive **dentro** del paquete `MRV1/` para mantener todo en el mismo repositorio, pero es una capa independiente: **el instalador de MRV1 nunca copia ni toca esta carpeta** al instalar en una PC cliente. |
 | Repositorio | `https://github.com/elinformaticoni/MRV1.git` |
 | API en producción | `https://mrv1.solucionesnicaragua.com/registros.php` — hosting DirectAdmin, base de datos `soluci12_MRV1`, PHP 8.3.33. |
-| Guía del monitor | `MRV1/MRV1.8.md` — arquitectura completa de MRV1, incluyendo `Cargador_DB.ps1` y el instalador (`Instalar_DB.ps1`). Este documento cubre solo el lado servidor (BD + API). |
+| Guía del monitor | `MRV1/sistema/MRV1.10.md` — arquitectura completa de MRV1, incluyendo `Cargador_DB.ps1` y el instalador (`Instalar_DB.ps1`). Este documento cubre solo el lado servidor (BD + API). |
 
 ---
 
 ## 0. Reglas para cualquier IA
 
-1. Este documento es el contexto maestro del lado servidor (BD + API). El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, integración con el instalador de MRV1) está documentado en `MRV1/MRV1.8.md`, sección "Carga a la API de análisis".
+1. Este documento es el contexto maestro del lado servidor (BD + API). El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, integración con el instalador de MRV1) está documentado en `MRV1/sistema/MRV1.10.md`, sección "Carga a la API de análisis".
 2. **No eliminar funcionalidad existente.** El Cargador FTP y el CSV local de MRV1 siguen funcionando exactamente igual; esta capa es un agregado opcional.
-3. Si se cambia algo de esta arquitectura, actualizar este documento y, si el cambio afecta al cliente, también `MRV1/MRV1.8.md`.
+3. Si se cambia algo de esta arquitectura, actualizar este documento y, si el cambio afecta al cliente, también `MRV1/sistema/MRV1.10.md`.
 
 ---
 
@@ -42,7 +42,7 @@ Monitor_Red.ps1 ──► CSV local
 |---|---|---|
 | Tablas MySQL (`computadoras`, `registros`) | Hosting `solucionesnicaragua.com` (BD `soluci12_MRV1`) | Almacenan los registros de todas las PCs |
 | API de recepción (PHP) | `https://mrv1.solucionesnicaragua.com/registros.php` | Recibe filas, valida token, hace upsert en MySQL |
-| `Cargador_DB.ps1` + `Instalar_DB.ps1` | PC del cliente, dentro de `MRV1/` | Ver `MRV1/MRV1.8.md` |
+| `Cargador_DB.ps1` + `Instalar_DB.ps1` | PC del cliente, dentro de `MRV1/` | Ver `MRV1/sistema/MRV1.10.md` |
 | Formulario de análisis semanal (SPA) + descarga del reporte HTML | `https://mrv1.solucionesnicaragua.com/` (`api/index.php`) | Selector de semana/días/horario/máquinas, gráfico y HTML autocontenido |
 
 ---
@@ -110,14 +110,16 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 2. **Días** — checklist Lun…Dom, **Lun–Vie marcados por defecto**. Un punto verde indica los días con registros de las máquinas seleccionadas.
 3. **Horario (eje horizontal)** — desde/hasta cada 30 min, **07:00–15:00 por defecto**; botones «Jornada» (7–15) y «Día completo» (0–24).
 4. **Máquinas** — solo las que tienen registros en la semana (alias + nombre de PC, días con datos, un chip por destino con su cantidad de ERROR). Todas marcadas por defecto; «Todas» / «Ninguna». Son el eje vertical.
-5. Opciones: mostrar Wi-Fi/cable (activo), mostrar eventos e inicios, incluir días sin registros.
+5. Opciones: marcar coincidencias (activo), mostrar eventos e inicios (activo), incluir días sin registros.
 6. **Generar gráfico** consulta los datos de la semana; cambiar días, horario u opciones redibuja al instante sin volver a consultar. **Descargar HTML** genera el reporte autocontenido.
 
 **Gráfico (motor en `<script id="motor">`, reutilizado tal cual en el HTML descargable):**
 
-- Un bloque por día; dentro, una franja por máquina y, si la máquina tiene varios destinos, **una fila por destino, una encima de la otra en el mismo eje**. Encima de los destinos, una tira fina con el adaptador (azul Wi-Fi / morado cable), tomado del mensaje de `INICIO` (tercer campo) y de los `EVENTO` «Cambio de adaptador: A -> B».
-- Colores: gris = conectado (OK), rojo = sin conexión (ERROR, mín. 2 px para que se vea una caída corta), rayado gris = incompleto (fila sin cerrar por apagado abrupto, hasta la siguiente fila), rayado claro = estado en curso de hoy (hasta la hora actual, no se suma). Eventos/inicios como marcas verticales (opcional). Tooltip con destino, estado, hora inicio–fin, duración, latencia y mensaje.
-- **Franja verde transparente**: el día completo si ninguna máquina seleccionada tuvo caídas en el horario; si el día sí tuvo, cada máquina sin caídas lleva su propia franja verde y «✓ sin caídas».
+- Un bloque por día; dentro, una franja por máquina y, si la máquina tiene varios destinos, **una fila por destino, una encima de la otra en el mismo eje**. Sin filas auxiliares: solo destinos.
+- Colores: **verde tenue translúcido** = hay registros y conectado (OK); **rojo** = sin conexión (ERROR, mín. 2 px para que se vea una caída corta); **en blanco** = sin datos (sin registros, o fila sin cerrar por apagado abrupto hasta la fila siguiente). Estado en curso de hoy: su color con rayado claro hasta la hora actual (no se suma). **Azul** = marcas verticales de eventos (cambio de adaptador, IP, interfaz) y, más claro, inicios del monitor.
+- **Coincidencias (naranja):** franja vertical que atraviesa todo el día donde **2 o más máquinas distintas** están en ERROR al mismo tiempo (cualquiera de sus destinos; varios destinos de una misma máquina no cuentan como coincidencia), con tolerancia de 5 s a cada lado porque cada monitor hace ping con su propio intervalo. Sirve para ubicar el problema en la red común y no en una estación. Marca en el eje con tooltip (hora, duración, máquinas) y contador en la cabecera del día.
+- Tooltip de cada tramo: destino, estado, hora inicio–fin, duración, latencia, mensaje y la red que usaba la máquina en ese momento (Wi-Fi/cable, tomado del `INICIO` y de los `EVENTO` «Cambio de adaptador: A -> B»).
+- Días / máquinas sin caídas en el horario: distintivo «✓ Sin caídas» en la cabecera del día o junto al nombre de la máquina.
 - Columna derecha **«Desconectado»**: suma de `ERROR` cerrados dentro del horario por destino, con la cantidad de caídas. Cabecera del día: caídas y suma total.
 - Al final, **resumen del periodo**: máquina × destino × día seleccionado, total, caídas y disponibilidad (% OK sobre OK+ERROR dentro del horario).
 - La duración de cada estado se toma de `tiempo_s`, limitada al inicio de la fila siguiente (que no sea `EVENTO`); todo se recorta al horario elegido.
@@ -169,7 +171,7 @@ MRV1/backend/
         └── .htaccess             Bloquea acceso HTTP directo a esta carpeta
 ```
 
-El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desinstalar_DB.bat`, `config/db_api.example.json`) vive en `MRV1/` junto a los demás componentes del monitor — ver `MRV1/MRV1.8.md`.
+El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desinstalar_DB.bat`, `config/db_api.example.json`) vive en `MRV1/` junto a los demás componentes del monitor — ver `MRV1/sistema/MRV1.10.md`.
 
 ---
 
