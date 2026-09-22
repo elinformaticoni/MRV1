@@ -131,6 +131,15 @@ try {
     $apiUrl      = [string]$cfg.apiUrl
     $token       = [string]$cfg.token
     $alias       = ''; if ($cfg.alias) { $alias = [string]$cfg.alias }
+    # [v1.9] El alias oficial vive en config\monitor.json (lo pide Instalar_Monitor.bat); tiene
+    # prioridad sobre el de db_api.json, que queda solo como respaldo de instalaciones anteriores.
+    try {
+        $monCfgPath = Join-Path $cfgDir 'monitor.json'
+        if (Test-Path -LiteralPath $monCfgPath) {
+            $mc = [System.IO.File]::ReadAllText($monCfgPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+            if (-not [string]::IsNullOrWhiteSpace([string]$mc.alias)) { $alias = [string]$mc.alias }
+        }
+    } catch { }
     $runEveryMin = 180; if ($cfg.runEveryMin) { $runEveryMin = [int]$cfg.runEveryMin }   # D10: predeterminado 3 horas
     $retries     = 3;   if ($cfg.retries)     { $retries     = [int]$cfg.retries }
     $maxFilas    = 300; if ($cfg.maxFilasPorEnvio) { $maxFilas = [int]$cfg.maxFilasPorEnvio }  # margen bajo el limite del servidor (500, ver IA.md sec. 5)

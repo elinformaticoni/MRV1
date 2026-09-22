@@ -38,6 +38,29 @@ function Write-Log([string]$msg) {
     } catch { }
 }
 
+# [v1.9] Carpeta remota = alias de la PC (config\monitor.json), convertido a un nombre seguro
+# para FTP: sin acentos (a/e/i/o/u/n), sin / \ : * ? " < > | # % ; , y sin espacios dobles.
+# Si no hay alias se usa el nombre de la PC. Si el alias cambia, la carpeta nueva se crea sola y
+# la anterior queda en el servidor con su contenido (no se mueve ni se borra nada).
+function Get-FtpFolderName([string]$cfgDirPath) {
+    $alias = ''
+    try {
+        $mp = Join-Path $cfgDirPath 'monitor.json'
+        if (Test-Path -LiteralPath $mp) {
+            $mc = [System.IO.File]::ReadAllText($mp, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+            if ($mc.alias) { $alias = [string]$mc.alias }
+        }
+    } catch { }
+    $n = $alias.Normalize([System.Text.NormalizationForm]::FormD)
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $n.ToCharArray()) {
+        if ([System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($ch) -ne [System.Globalization.UnicodeCategory]::NonSpacingMark) { [void]$sb.Append($ch) }
+    }
+    $n = ($sb.ToString() -replace '[\\/:*?"<>|#%;,\x00-\x1F]', ' ' -replace '\s{2,}', ' ').Trim().TrimEnd('.').Trim()
+    if ([string]::IsNullOrWhiteSpace($n)) { $n = $env:COMPUTERNAME }
+    return $n
+}
+
 # Escritura atomica de ftp_status.json, para que la consola nunca lea un archivo a medias.
 function Write-FtpStatus([bool]$ok, [int]$uploadedOld, [int]$failedOld, [int]$uploadedToday, [int]$failedToday, [int]$runEveryMin, [string]$errorMsg) {
     try {
@@ -53,6 +76,7 @@ function Write-FtpStatus([bool]$ok, [int]$uploadedOld, [int]$failedOld, [int]$up
             runEveryMin    = $runEveryMin
             nextRun        = $now.AddMinutes($runEveryMin).ToString('s')
             lastError      = $errorMsg
+            remoteDir      = $script:RemoteDir
         }
         $json = $obj | ConvertTo-Json -Depth 4
         $tmp = $statusFile + '.tmp'
@@ -83,14 +107,10 @@ try {
     $port  = 21; if ($cfg.port) { $port = [int]$cfg.port }
     $user  = [string]$cfg.user
     $pass  = [string]$cfg.password
-    # La carpeta remota es la que se configuro en el asistente (por defecto, el nombre de esta PC);
-    # se usa tal cual, sin anidar otra subcarpeta con el nombre de la maquina. Un valor guardado
-    # como '/' (raiz) no cuenta como configuracion real [MEJORA v1.6]: es lo que quedaba grabado
-    # en instalaciones anteriores a la 1.3, antes de que existiera la carpeta por PC, y si se
-    # sigue respetando los registros de todas las PC terminan mezclados en la raiz del servidor.
-    $remoteDir = '/' + $pc + '/'
-    if ($cfg.remoteDir -and ($cfg.remoteDir.Trim() -ne '/')) { $remoteDir = [string]$cfg.remoteDir }
-    if (-not $remoteDir.EndsWith('/')) { $remoteDir += '/' }
+    # [v1.9] La carpeta remota ya no se configura: es el alias de la PC (ver Get-FtpFolderName).
+    # Un remoteDir que haya quedado en ftp.json de versiones anteriores se ignora.
+    $remoteDir = '/' + (Get-FtpFolderName $cfgDir) + '/'
+    $script:RemoteDir = $remoteDir
     $retries = 3; if ($cfg.retries) { $retries = [int]$cfg.retries }
     $uploadToday = $true; if ($null -ne $cfg.uploadCurrentDay) { $uploadToday = [bool]$cfg.uploadCurrentDay }
     $runEveryMin = 120; if ($cfg.runEveryMin) { $runEveryMin = [int]$cfg.runEveryMin }

@@ -31,6 +31,7 @@ $loaderGraceMin = 15    # margen tras la hora prevista antes de marcar una carga
 $logDir        = Join-Path $Root 'logs'
 $staleSec      = 15      # el monitor escribe status.json cada segundo
 $cache         = @{}
+$script:TitleAlias = ''
 
 # ---------------------------------------------------------------------------------------------
 # Lectura compartida (no bloquea al monitor)
@@ -191,7 +192,8 @@ function Get-LoaderLines([string]$kind, [datetime]$now) {
         [void]$out.Add($head)
         if ($kind -eq 'FTP') {
             $old = [int]$st.uploadedOld; $today = [int]$st.uploadedToday
-            [void]$out.Add(@((New-Seg ('         Archivos subidos: {0} (días anteriores {1} + hoy {2})' -f ($old + $today), $old, $today) 'DarkGray')))
+            $dirTxt = ''; if ($st.remoteDir) { $dirTxt = ('   Carpeta: {0}' -f $st.remoteDir) }
+            [void]$out.Add(@((New-Seg ('         Archivos subidos: {0} (días anteriores {1} + hoy {2}){3}' -f ($old + $today), $old, $today, $dirTxt) 'DarkGray')))
         } else {
             $old = [int]$st.syncedOld; $today = [int]$st.syncedToday
             [void]$out.Add(@((New-Seg ('         Archivos sincronizados: {0} (días anteriores {1} + hoy {2})   Filas: {3} nuevas, {4} actualizadas' -f ($old + $today), $old, $today, [int]$st.insertadas, [int]$st.actualizadas) 'DarkGray')))
@@ -253,12 +255,25 @@ function Build-Screen {
     $stopped = ($st.running -eq $false)
 
     # ---- Encabezado
+    # [v1.9] Alias de la PC: de status.json; si el monitor en marcha es anterior y no lo trae, de config\monitor.json.
+    $alias = [string]$st.alias
+    if ([string]::IsNullOrWhiteSpace($alias)) {
+        $mc = Read-JsonShared (Join-Path $Root 'config\monitor.json')
+        if ($mc -and $mc.alias) { $alias = [string]$mc.alias }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($alias) -and ($alias -ne $script:TitleAlias)) {
+        $script:TitleAlias = $alias
+        try { $Host.UI.RawUI.WindowTitle = 'Monitor de Red - ' + $alias } catch { }
+    }
     $ad = $st.adapter
     $adText = '(sin adaptador)'
     if ($ad -and $ad.name -and ($ad.ip)) {
         $adText = ('{0} ({1}{2}) {3}' -f $ad.name, $ad.type, $(if ($ad.ssid) { ' ' + $ad.ssid } else { '' }), $ad.ip)
     }
-    [void]$lines.Add(@((New-Seg ('MONITOR DE RED  ' + $st.version) 'White'), (New-Seg ('     Actualizado ' + $ts.ToString('HH:mm:ss')) 'DarkGray')))
+    $hdr = @((New-Seg ('MONITOR DE RED  ' + $st.version) 'White'))
+    if (-not [string]::IsNullOrWhiteSpace($alias)) { $hdr += (New-Seg '   ·   ' 'DarkGray'); $hdr += (New-Seg $alias.ToUpper() 'Cyan') }
+    $hdr += (New-Seg ('     Actualizado ' + $ts.ToString('HH:mm:ss')) 'DarkGray')
+    [void]$lines.Add($hdr)
     [void]$lines.Add(@((New-Seg ('COMPUTADORA: {0}   USUARIO: {1}' -f $st.computer, $st.user) 'Gray')))
     [void]$lines.Add(@((New-Seg ('ADAPTADOR: ' + $adText) 'Gray')))
     $sess = $now

@@ -65,8 +65,20 @@ $tokenPrompt = '  Token de la API'
 $tokenIn = Read-Host ('{0} (Enter = mantener el actual)' -f $tokenPrompt)
 $token = $defToken
 if (-not [string]::IsNullOrWhiteSpace($tokenIn)) { $token = $tokenIn.Trim() }
-Write-Host '  El alias identifica el punto observado (ej. "Laboratorio 2 - Edificio A"); el nombre de la PC no siempre es descriptivo.' -ForegroundColor Gray
-$alias = Read-Default '  Alias de esta PC' $defAlias
+# [v1.9] El alias se pide una sola vez en Instalar_Monitor.bat y vive en config\monitor.json.
+# Aqui solo se pregunta si todavia no existe (monitor instalado con una version anterior).
+$monAlias = ''
+$monCfgPath = Join-Path $cfgDir 'monitor.json'
+if (Test-Path -LiteralPath $monCfgPath) {
+    try { $mc = Get-Content -LiteralPath $monCfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if ($mc.alias) { $monAlias = [string]$mc.alias } } catch { }
+}
+if (-not [string]::IsNullOrWhiteSpace($monAlias)) {
+    $alias = $monAlias
+    Write-Host ('  Alias de esta PC: {0}   (se cambia con Instalar_Monitor.bat)' -f $alias) -ForegroundColor Gray
+} else {
+    Write-Host '  El alias identifica el punto observado (ej. "Laboratorio 2 - Edificio A"); el nombre de la PC no siempre es descriptivo.' -ForegroundColor Gray
+    $alias = Read-Default '  Alias de esta PC' $defAlias
+}
 $runEveryMin = Read-IntDefault 'Frecuencia de envio en minutos' $defMin 5 1440
 $retries = Read-IntDefault 'Reintentos ante fallo' $defRetry 1 10
 

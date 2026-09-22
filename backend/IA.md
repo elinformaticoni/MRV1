@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Estado | Capa de análisis funcionando en producción (BD + API) y `Cargador_DB.ps1` integrado al instalador de MRV1 (paquete 1.8). Pendiente: formulario/reporte (SPA). |
+| Estado | Capa de análisis funcionando en producción (BD + API) y `Cargador_DB.ps1` integrado al instalador de MRV1 (paquete 1.8). Formulario de análisis semanal (`api/index.php`) construido — pendiente de desplegar y probar con datos reales. |
 | Ubicación en el repositorio | `MRV1/backend/` — vive **dentro** del paquete `MRV1/` para mantener todo en el mismo repositorio, pero es una capa independiente: **el instalador de MRV1 nunca copia ni toca esta carpeta** al instalar en una PC cliente. |
 | Repositorio | `https://github.com/elinformaticoni/MRV1.git` |
 | API en producción | `https://mrv1.solucionesnicaragua.com/registros.php` — hosting DirectAdmin, base de datos `soluci12_MRV1`, PHP 8.3.33. |
@@ -33,7 +33,7 @@ Monitor_Red.ps1 ──► CSV local
        │
        └──► Cargador_DB.ps1 (opcional) ──► API (PHP) ──► MySQL
             cada 3 h (configurable)                          │
-                                              formulario de reporte (SPA, pendiente)
+                                              formulario de análisis (index.php, SPA)
                                                                │
                                               HTML autocontenido generado al vuelo ──► descarga / correo
 ```
@@ -43,7 +43,7 @@ Monitor_Red.ps1 ──► CSV local
 | Tablas MySQL (`computadoras`, `registros`) | Hosting `solucionesnicaragua.com` (BD `soluci12_MRV1`) | Almacenan los registros de todas las PCs |
 | API de recepción (PHP) | `https://mrv1.solucionesnicaragua.com/registros.php` | Recibe filas, valida token, hace upsert en MySQL |
 | `Cargador_DB.ps1` + `Instalar_DB.ps1` | PC del cliente, dentro de `MRV1/` | Ver `MRV1/MRV1.8.md` |
-| Formulario de extracción (SPA) + generador de reporte | Mismo hosting | **Pendiente de construir** |
+| Formulario de análisis semanal (SPA) + descarga del reporte HTML | `https://mrv1.solucionesnicaragua.com/` (`api/index.php`) | Selector de semana/días/horario/máquinas, gráfico y HTML autocontenido |
 
 ---
 
@@ -100,15 +100,40 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 
 ---
 
-## 5. Formulario de extracción + generador de reporte — pendiente
+## 5. Formulario de análisis semanal (`index.php`)
 
-Por construir. Diseño acordado hasta ahora:
+`api/index.php` — se abre directo en `https://mrv1.solucionesnicaragua.com/` (junto a `registros.php`). Un solo archivo: página SPA + endpoints JSON de consulta (solo lectura de la BD).
 
-- Página **SPA** (sin recarga de página) para elegir rango de fechas (desde/hasta) y PCs/ubicaciones (`alias`) a incluir.
-- El reporte se entrega como **archivo HTML descargable y autocontenido** (datos embebidos, sin dependencias externas) — no una página dinámica que solo vive en el servidor — para poder compartirlo con facilidad, incluso por correo.
-- Reutiliza el motor de gráfico ya construido en el HTML "Caídas de conectividad" (toggle wifi/cable, barra verde transparente en días sin errores, jornada 7 am–3 pm con suma de tiempo desconectado por máquina), extendido a varias PCs/ubicaciones en el mismo reporte.
-- Cada reporte es un snapshot cerrado: no necesita reabrirse ni permitir edición manual posterior. Para "actualizar" un reporte, simplemente se genera otro con el mismo rango.
-- Pendiente definir algún control de acceso mínimo para que el formulario no exponga datos de todas las ubicaciones a cualquiera.
+**Formulario (de arriba abajo):**
+
+1. **Semana** — se trabaja por semana (lunes a domingo) para no saturar de datos: calendario (cualquier día elige su semana), ◀ ▶ y «Esta semana». Por defecto, la semana actual.
+2. **Días** — checklist Lun…Dom, **Lun–Vie marcados por defecto**. Un punto verde indica los días con registros de las máquinas seleccionadas.
+3. **Horario (eje horizontal)** — desde/hasta cada 30 min, **07:00–15:00 por defecto**; botones «Jornada» (7–15) y «Día completo» (0–24).
+4. **Máquinas** — solo las que tienen registros en la semana (alias + nombre de PC, días con datos, un chip por destino con su cantidad de ERROR). Todas marcadas por defecto; «Todas» / «Ninguna». Son el eje vertical.
+5. Opciones: mostrar Wi-Fi/cable (activo), mostrar eventos e inicios, incluir días sin registros.
+6. **Generar gráfico** consulta los datos de la semana; cambiar días, horario u opciones redibuja al instante sin volver a consultar. **Descargar HTML** genera el reporte autocontenido.
+
+**Gráfico (motor en `<script id="motor">`, reutilizado tal cual en el HTML descargable):**
+
+- Un bloque por día; dentro, una franja por máquina y, si la máquina tiene varios destinos, **una fila por destino, una encima de la otra en el mismo eje**. Encima de los destinos, una tira fina con el adaptador (azul Wi-Fi / morado cable), tomado del mensaje de `INICIO` (tercer campo) y de los `EVENTO` «Cambio de adaptador: A -> B».
+- Colores: gris = conectado (OK), rojo = sin conexión (ERROR, mín. 2 px para que se vea una caída corta), rayado gris = incompleto (fila sin cerrar por apagado abrupto, hasta la siguiente fila), rayado claro = estado en curso de hoy (hasta la hora actual, no se suma). Eventos/inicios como marcas verticales (opcional). Tooltip con destino, estado, hora inicio–fin, duración, latencia y mensaje.
+- **Franja verde transparente**: el día completo si ninguna máquina seleccionada tuvo caídas en el horario; si el día sí tuvo, cada máquina sin caídas lleva su propia franja verde y «✓ sin caídas».
+- Columna derecha **«Desconectado»**: suma de `ERROR` cerrados dentro del horario por destino, con la cantidad de caídas. Cabecera del día: caídas y suma total.
+- Al final, **resumen del periodo**: máquina × destino × día seleccionado, total, caídas y disponibilidad (% OK sobre OK+ERROR dentro del horario).
+- La duración de cada estado se toma de `tiempo_s`, limitada al inicio de la fila siguiente (que no sea `EVENTO`); todo se recorta al horario elegido.
+
+**Endpoints JSON** (mismo archivo, `GET`):
+
+| Acción | Parámetros | Respuesta |
+|---|---|---|
+| `?accion=maquinas` | `desde`, `hasta` (AAAA-MM-DD, máx. 31 días) | `{ ok, maquinas: [{ pc, alias, destinos: [{ destino, registros, errores }], dias: [...] }] }` |
+| `?accion=datos` | `desde`, `hasta`, `pc[]` (1–100) | `{ ok, filas, maquinas: [{ pc, alias, destinos: [{ destino, filas: [[fecha, hora, tipo, tiempo_s, latencia_ms, mensaje], ...] }] }] }` — tope 200 000 filas |
+
+Usan `idx_fecha` / `idx_pc_fecha`, el mismo manejador de errores JSON que `registros.php` y respetan `debug`.
+
+**Control de acceso:** `config.php` → `'reporte' => ['clave' => '…']`. Con clave: pide iniciar sesión (sesión PHP, cookie `HttpOnly`/`SameSite=Lax`, `Secure` bajo HTTPS; comparación con `hash_equals`; «Cerrar sesión» = `?salir=1`); los endpoints responden 401 sin sesión. Sin clave (o si falta la entrada): acceso abierto con un aviso amarillo en la página.
+
+**HTML descargable:** un solo archivo (`MRV1 analisis AAAA-MM-DD al AAAA-MM-DD.html`) con CSS, motor y datos embebidos; sin dependencias externas, funciona sin conexión, modo claro/oscuro y en celular. Es un snapshot cerrado (días, horario y opciones del momento de generarlo).
 
 ---
 
@@ -132,13 +157,14 @@ MRV1/backend/
 ├── sql/
 │   └── 001_crear_base.sql       Crea computadoras y registros (CREATE TABLE IF NOT EXISTS)
 └── api/                          Desplegada en https://mrv1.solucionesnicaragua.com/
+    ├── index.php                Formulario SPA de análisis semanal + endpoints GET de consulta
     ├── registros.php            Endpoint POST — recibe y hace upsert de las filas
     ├── lib/
     │   ├── db.php                Conexión PDO a MySQL
     │   └── util.php              Respuestas JSON, validación de token, límite de tamaño del cuerpo,
     │                              manejador global de errores (mr_instalar_manejador_errores)
     └── config/
-        ├── config.example.php   Plantilla de configuración (sí va a git) — incluye clave 'debug'
+        ├── config.example.php   Plantilla de configuración (sí va a git) — incluye 'debug' y 'reporte' => ['clave']
         ├── config.php           Configuración real con credenciales (solo en el servidor, no va a git)
         └── .htaccess             Bloquea acceso HTTP directo a esta carpeta
 ```
@@ -157,5 +183,6 @@ El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desin
 
 ## 9. Pendiente
 
-- Formulario de extracción (SPA) + generador de reporte HTML (sección 5).
+- Desplegar `api/index.php`, poner la clave de `reporte` en `config.php` del servidor y validar el gráfico con datos reales.
+- Si se necesita más de una semana a la vez: el endpoint ya acepta hasta 31 días; faltaría el selector en la página.
 - Prueba de punta a punta con al menos 2 PCs reales enviando datos simultáneamente.

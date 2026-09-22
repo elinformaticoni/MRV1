@@ -24,6 +24,7 @@ $script:DiagDir    = Join-Path $Root 'diag'
 $script:StatusFile = Join-Path $Root 'status.json'
 $script:StopFlag   = Join-Path $Root 'stop.flag'
 $script:PC         = $env:COMPUTERNAME
+$script:Alias      = ''   # [v1.9] alias de la PC (config\monitor.json), para status.json / consola
 $script:CsvHeader  = 'FECHA;HORA;TIPO;TIEMPO (s);LATENCIA (ms);MENSAJE'
 $script:Utf8       = New-Object System.Text.UTF8Encoding($false)
 $script:GapSec     = 30          # pausa entre ciclos que se considera suspension/pausa
@@ -412,6 +413,7 @@ function Write-Status([bool]$running) {
             version       = $script:VersionText
             running       = $running
             computer      = $script:PC
+            alias         = $script:Alias
             user          = $script:User
             adapter       = $adObj
             sessionStart  = $script:SessionStart.ToString('s')
@@ -639,6 +641,7 @@ try {
     $cfgPath = Join-Path $script:CfgDir 'monitor.json'
     $cfg = [System.IO.File]::ReadAllText($cfgPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
     if (-not $cfg.targets -or @($cfg.targets).Count -eq 0) { throw 'monitor.json no contiene destinos.' }
+    if ($cfg.alias) { $script:Alias = [string]$cfg.alias }
     $verPath = Join-Path $script:CfgDir 'version.json'
     if (Test-Path -LiteralPath $verPath) {
         try {

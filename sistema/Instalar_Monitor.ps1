@@ -46,6 +46,32 @@ function Read-IntDefault([string]$prompt, [int]$default, [int]$min, [int]$max) {
     }
 }
 
+function Get-CleanAlias([string]$a) {
+    # Sin ; , comillas ni saltos de linea (viaja en JSON y en la API), maximo 60 caracteres.
+    $a = ($a -replace '[;,"\r\n\t]', ' ' -replace '\s{2,}', ' ').Trim()
+    if ($a.Length -gt 60) { $a = $a.Substring(0, 60).Trim() }
+    return $a
+}
+
+# ---- Alias de esta PC [v1.9]: se pide una sola vez, aqui, al principio. Queda en config\monitor.json
+# y lo usan la consola (encabezado) y la carga a la API de analisis (Cargador_DB.ps1).
+# Valor por defecto: el alias ya guardado; si no hay, el que tuviera db_api.json (instalaciones
+# anteriores a v1.9, donde solo lo pedia Instalar_DB); si tampoco, el nombre de la PC.
+$defAlias = $env:COMPUTERNAME
+$dbCfgOld = Join-Path $cfgDir 'db_api.json'
+if (Test-Path -LiteralPath $dbCfgOld) {
+    try { $dbOld = Get-Content -LiteralPath $dbCfgOld -Raw -Encoding UTF8 | ConvertFrom-Json; if ($dbOld.alias) { $defAlias = [string]$dbOld.alias } } catch { }
+}
+if ($existing -and $existing.alias) { $defAlias = [string]$existing.alias }
+Write-Host 'Alias de esta PC: nombre descriptivo del lugar observado (ej. "Laboratorio 2 - Edificio A").' -ForegroundColor Gray
+Write-Host 'Se muestra en la consola y se envia con los registros a la API de analisis.' -ForegroundColor Gray
+$alias = ''
+while ([string]::IsNullOrWhiteSpace($alias)) {
+    $alias = Get-CleanAlias (Read-Default 'Alias de esta PC' $defAlias)
+    if ([string]::IsNullOrWhiteSpace($alias)) { Write-Host '  El alias no puede quedar vacio.' -ForegroundColor Yellow }
+}
+Write-Host ''
+
 # ---- Destinos: si ya hay configuracion, se ofrece conservarla, editarla o empezar de nuevo
 $targets = New-Object System.Collections.ArrayList
 $existingList = @()
@@ -125,6 +151,7 @@ if ($existing -and $existing.detection) {
 
 $cfgObj = [ordered]@{
     schemaVersion = 1
+    alias         = $alias
     targets       = @($targets)
     detection     = [ordered]@{ timeoutMs = $timeoutMs; networkCheckSec = $netSec }
 }

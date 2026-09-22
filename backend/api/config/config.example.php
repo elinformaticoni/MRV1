@@ -31,6 +31,12 @@ return [
         'max_bytes_body'      => 262144, // 256 KB, de sobra para 500 filas de texto
     ],
 
+    // Acceso al formulario de análisis (index.php). Si la clave queda vacía, la página
+    // se abre sin pedir nada (y muestra un aviso). Recomendado: poner una clave propia.
+    'reporte' => [
+        'clave' => '',
+    ],
+
     // Solo para diagnosticar problemas puntuales: si es true, las respuestas de error
     // incluyen el detalle real (mensaje de PDO, excepción, etc.). Dejar SIEMPRE en
     // false en producción — el detalle no debe ser visible a quien llame la API.

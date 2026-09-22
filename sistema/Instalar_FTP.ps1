@@ -44,20 +44,12 @@ $defHost = 'solucionesnicaragua.com'
 $defPort = 21
 $defUser = 'registros@solucionesnicaragua.com'
 $defPass = 'yxFM5awxECy8qaftpnMy'
-# La carpeta remota predeterminada es siempre el nombre de esta PC, para separar los registros
-# de cada equipo en el servidor sin que el usuario tenga que escribirlo. Si ya existe una
-# configuracion previa con una carpeta distinta (el usuario la cambio a proposito), se respeta.
-$defDir = '/' + $env:COMPUTERNAME + '/'
 $defMin = 120; $defRetry = 3
 if ($existing) {
     if ($existing.host)        { $defHost = [string]$existing.host }
     if ($existing.port)        { $defPort = [int]$existing.port }
     if ($existing.user)        { $defUser = [string]$existing.user }
     if ($existing.password)    { $defPass = [string]$existing.password }
-    # Una carpeta remota guardada como '/' (raiz) no se respeta como valor definitivo: es lo que
-    # quedaba grabado en instalaciones anteriores a la 1.3 (antes de existir la carpeta por PC) y,
-    # si se sigue arrastrando, los registros de todas las PC terminan mezclados en la raiz del FTP.
-    if ($existing.remoteDir -and ($existing.remoteDir.Trim() -ne '/')) { $defDir = [string]$existing.remoteDir }
     if ($existing.runEveryMin) { $defMin  = [int]$existing.runEveryMin }
     if ($existing.retries)     { $defRetry = [int]$existing.retries }
 }
@@ -70,9 +62,31 @@ if ($defPass -ne '') { $passPrompt += ' (Enter = mantener la actual)' }
 $passIn = Read-Host $passPrompt
 $pass = $defPass
 if (-not [string]::IsNullOrWhiteSpace($passIn)) { $pass = $passIn }
-Write-Host '  Se recomienda una carpeta por PC, para no mezclar los registros de varias computadoras en el servidor.' -ForegroundColor Gray
-$remoteDir = Read-Default '  Carpeta remota' $defDir
-if (-not $remoteDir.EndsWith('/')) { $remoteDir += '/' }
+# [v1.9] Carpeta remota = alias de la PC (config\monitor.json), convertido a un nombre seguro
+# para FTP: sin acentos (a/e/i/o/u/n), sin / \ : * ? " < > | # % ; , y sin espacios dobles.
+# Si no hay alias se usa el nombre de la PC. Si el alias cambia, la carpeta nueva se crea sola y
+# la anterior queda en el servidor con su contenido (no se mueve ni se borra nada).
+function Get-FtpFolderName([string]$cfgDirPath) {
+    $alias = ''
+    try {
+        $mp = Join-Path $cfgDirPath 'monitor.json'
+        if (Test-Path -LiteralPath $mp) {
+            $mc = [System.IO.File]::ReadAllText($mp, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+            if ($mc.alias) { $alias = [string]$mc.alias }
+        }
+    } catch { }
+    $n = $alias.Normalize([System.Text.NormalizationForm]::FormD)
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($ch in $n.ToCharArray()) {
+        if ([System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($ch) -ne [System.Globalization.UnicodeCategory]::NonSpacingMark) { [void]$sb.Append($ch) }
+    }
+    $n = ($sb.ToString() -replace '[\\/:*?"<>|#%;,\x00-\x1F]', ' ' -replace '\s{2,}', ' ').Trim().TrimEnd('.').Trim()
+    if ([string]::IsNullOrWhiteSpace($n)) { $n = $env:COMPUTERNAME }
+    return $n
+}
+# [v1.9] Ya no se pregunta la carpeta remota: es el alias de esta PC (se cambia con Instalar_Monitor.bat).
+$remoteDir = '/' + (Get-FtpFolderName $cfgDir) + '/'
+Write-Host ('  Carpeta remota: {0}   (alias de esta PC)' -f $remoteDir) -ForegroundColor Gray
 $runEveryMin = Read-IntDefault 'Frecuencia de ejecucion en minutos' $defMin 5 1440
 $retries = Read-IntDefault 'Reintentos ante fallo' $defRetry 1 10
 
@@ -81,7 +95,6 @@ $cfgObj = [ordered]@{
     protocol         = 'ftp'
     host             = $host_
     port             = $port
-    remoteDir        = $remoteDir
     user             = $user
     password         = $pass
     runEveryMin      = $runEveryMin

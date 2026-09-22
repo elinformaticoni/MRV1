@@ -51,11 +51,17 @@ Si vuelves a correr exactamente el mismo `curl`, la respuesta debería cambiar a
 
 Para simular que una fila `OK` se "cierra" (como pasaría con la última fila del día cuando cambia de estado), reenvíala con `tiempo_s`/`latencia_ms` distintos y debe salir `"actualizadas":1`.
 
-## 4. Qué falta (ver IA.md sección 11)
+## 4. Formulario de análisis semanal (`index.php`)
 
-- `Cargador_DB.ps1` en la PC del cliente (envía los CSV a este endpoint).
-- Pregunta opcional en el instalador de MRV1 (subversión 1.7) + intervalo de carga configurable (predeterminado 3 horas).
-- `reporte.php` (formulario SPA + generador del HTML de reporte) — se aborda después, junto con la plantilla de salida.
+1. Sube `api/index.php` junto a `registros.php` (misma carpeta; usa `lib/` y `config/`). Se abre directo en la raíz del subdominio: `https://mrv1.solucionesnicaragua.com/`.
+2. En `config/config.php` agrega la clave de acceso (recomendado):
+   ```php
+   'reporte' => ['clave' => 'una-clave-propia'],
+   ```
+   Sin esa entrada la página funciona igual, pero abierta a cualquiera (muestra un aviso).
+3. Elige semana, días (Lun–Vie por defecto), horario (07:00–15:00 por defecto) y máquinas → **Generar gráfico** → **Descargar HTML** para compartir el reporte.
+
+Detalle del gráfico y de los endpoints de consulta: `IA.md` sección 5.
 
 ## Estructura de esta carpeta
 
@@ -67,6 +73,7 @@ backend/
 ├── sql/
 │   └── 001_crear_base.sql       Crea las tablas computadoras y registros
 └── api/
+    ├── index.php                Formulario SPA de análisis semanal (GET, solo lectura)
     ├── registros.php            Endpoint POST que reciben los datos
     ├── lib/
     │   ├── db.php                Conexión PDO a MySQL

@@ -155,9 +155,12 @@ Detalles para generar: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File 
 
 ### 4.2 Preguntas del instalador del monitor (`Instalar_Monitor.ps1`)
 
-El destino 1 es obligatorio; los demás son opcionales.
+Lo primero que pregunta es el **alias de esta PC** [v1.9] (Enter = el alias ya guardado; en una instalación anterior, el de `db_api.json`; si no hay, el nombre de la PC). Se pide **una sola vez**, aquí: queda en `config\monitor.json`, se muestra en el encabezado de la consola y lo usa la carga a la API. No puede quedar vacío; se le quitan `;`, `,`, comillas y saltos de línea y se limita a 60 caracteres.
+
+Luego los destinos. El destino 1 es obligatorio; los demás son opcionales.
 
 ```text
+Alias de esta PC: (Enter = actual / nombre de la PC)
 IP/Dominio a monitorear:
 Intervalo de ping en segundos: (Valor predeterminado: 5 segundos)
 Pings consecutivos para confirmar un cambio de estado: (Valor predeterminado: 1)
@@ -186,9 +189,9 @@ Cada una, si se responde S, invoca al asistente correspondiente (`Instalar_FTP.p
 
 ### 4.3 Preguntas del instalador FTP (`Instalar_FTP.ps1`)
 
-Servidor, puerto (21 por defecto), usuario, contraseña, carpeta remota y frecuencia (cada 2 horas por defecto). FTP plano, sin cifrado. Servidor de fábrica: `solucionesnicaragua.com`, puerto 21.
+Servidor, puerto (21 por defecto), usuario, contraseña y frecuencia (cada 2 horas por defecto). FTP plano, sin cifrado. Servidor de fábrica: `solucionesnicaragua.com`, puerto 21.
 
-- **Carpeta remota, valor predeterminado:** siempre se propone el nombre de esta PC (`/<PC>/`), para que cada equipo quede separado en el servidor sin que el usuario tenga que escribirlo. Si ya existe una configuración previa con una carpeta distinta, el asistente respeta ese valor como predeterminado — **excepto cuando el valor guardado es exactamente `/` (raíz)**, que no cuenta como una elección real y se vuelve a proponer `/<PC>/`. `Cargador_FTP.ps1` aplica la misma regla al subir (ver 9.2).
+- **Carpeta remota = alias de la PC [v1.9]:** ya no se pregunta. El asistente solo la muestra; `Cargador_FTP.ps1` la calcula en cada ejecución a partir del alias de `config\monitor.json` (ver 4.2), convertido a un nombre seguro para FTP: sin acentos (á→a, ñ→n), sin `/ \ : * ? " < > | # % ; ,` y sin espacios dobles (ej. «Dirección Área Niño #3» → `/Direccion Area Nino 3/`). Sin alias se usa el nombre de la PC. Si el alias cambia, la siguiente carga crea la carpeta nueva y **la anterior queda en el servidor con su contenido** (no se mueve ni se borra nada). Un `remoteDir` que haya quedado en `ftp.json` de versiones anteriores se ignora. Los nombres de los CSV no cambian (siguen llevando el nombre de la PC, ver 6.4).
 - **Verificación inmediata:** al terminar de guardar la configuración, el asistente ejecuta el cargador una vez, ahí mismo, y espera el resultado para mostrarlo en pantalla (conexión correcta y cuántos archivos se subieron, o el error concreto), sin esperar a la primera ejecución programada.
 
 ### 4.4 Preguntas del instalador de la API de análisis (`Instalar_DB.ps1`)
@@ -198,11 +201,11 @@ Todos los campos tienen un valor predeterminado; basta con Enter en cada uno par
 ```text
 URL de la API de análisis: (Enter = URL de fábrica del paquete)
 Token de la API: (Enter = mantener el actual / el de fábrica)
-Alias de esta PC: (Enter = nombre de la PC)
 Frecuencia de envío en minutos: (Enter = 180, cada 3 horas)
 Reintentos ante fallo: (Enter = 3)
 ```
 
+- [v1.9] `Instalar_DB.ps1` ya **no pregunta el alias** si `monitor.json` lo tiene: lo muestra y lo copia a `db_api.json`; solo lo pregunta si el monitor se instaló con una versión anterior sin alias. `Cargador_DB.ps1` usa siempre el de `monitor.json` y solo si falta recurre al de `db_api.json`. Para cambiarlo se vuelve a ejecutar `Instalar_Monitor.bat`.
 - El **alias** identifica el punto observado con un nombre descriptivo (ej. "Laboratorio 2 - Edificio A"); el nombre de la PC no siempre lo es. Se envía en cada carga junto con los registros (ver 10.2) y se autoregistra solo en el servidor, sin pasos manuales.
 - Al igual que el instalador FTP, al terminar prueba el envío en primer plano de inmediato y muestra el resultado (envío correcto y cuántas filas se sincronizaron, o el error concreto).
 - El token y la URL de fábrica que trae el asistente deben mantenerse actualizados en el propio script (`Instalar_DB.ps1`) antes de distribuir el paquete a otras PC — ver 10.4.
@@ -245,6 +248,7 @@ Cada `Desinstalar_*.bat` elimina la tarea programada, los scripts y la configura
 // config\monitor.json
 {
   "schemaVersion": 1,
+  "alias": "Laboratorio 2 - Edificio A",
   "targets": [
     { "address": "8.8.8.8", "intervalSec": 5, "confirmPings": 1 },
     { "address": "192.168.2.1", "intervalSec": 5, "confirmPings": 1 }
@@ -258,7 +262,7 @@ Cada `Desinstalar_*.bat` elimina la tarea programada, los scripts y la configura
 {
   "schemaVersion": 1,
   "protocol": "ftp",
-  "host": "solucionesnicaragua.com", "port": 21, "remoteDir": "/<PC>/",
+  "host": "solucionesnicaragua.com", "port": 21,
   "user": "", "password": "",
   "runEveryMin": 120, "retries": 3, "uploadCurrentDay": true
 }
@@ -448,6 +452,7 @@ Representa el estado **instantáneo**: lo que los CSV no pueden dar (latencia ac
   "schemaVersion": 1,
   "version": "MR V1.0",
   "computer": "PC-01",
+  "alias": "Laboratorio 2 - Edificio A",
   "user": "Profesor1",
   "adapter": { "name": "Wi-Fi", "type": "Wi-Fi", "ip": "192.168.1.103", "status": "Up" },
   "sessionStart": "2026-09-20T07:00:00",
@@ -488,6 +493,7 @@ Interfaz visual que se puede abrir en cualquier momento. **No hace ping** y no g
 La consola muestra:
 
 **Arriba (resumen)**
+- el **alias** de la PC en la primera línea, en mayúsculas y color cian, y también en el título de la ventana [v1.9] (de `status.json`; si el monitor en marcha es anterior y no lo trae, de `config\monitor.json`);
 - computadora, usuario, adaptador actual (tipo y nombre) e IP, versión;
 - tiempo desde el inicio de la sesión;
 - por destino: dirección, estado actual, desde cuándo y duración, latencia actual y promedio, última respuesta;
@@ -522,7 +528,7 @@ CARGAS AL SERVIDOR
 **Colores:** verde = OK, rojo = ERROR, amarillo = EVENTO, cian = INICIO, gris = INCOMPLETO.
 
 ```text
-MONITOR DE RED MR V1.0        PC-01 · Profesor1 · Wi-Fi 192.168.1.103        Actualizado 22:35:10
+MONITOR DE RED MR V1.0   ·   LABORATORIO 2 - EDIFICIO A     PC-01 · Profesor1 · Wi-Fi 192.168.1.103        Actualizado 22:35:10
 Sesión desde 07:00:00 (15:35:10)
 
 DESTINO 1: 8.8.8.8      ESTADO: OK  desde 22:33:10 (00:02:00)
@@ -573,7 +579,7 @@ logs\cargados\
 - Reintentos controlados ante fallo; el archivo queda disponible para el siguiente intento. No se pierde información ni se borran registros pendientes.
 - Si el servidor está apagado, sin conexión, temporalmente inaccesible o rechaza la transferencia, el monitor sigue funcionando normalmente.
 - Log del cargador (`ftp_worker.log`), con rotación por tamaño.
-- En el servidor, los archivos van en una carpeta con el nombre del PC (`remoteDir`, por defecto `/<PC>/`, propuesto siempre por el asistente); el cargador la crea automáticamente si no existe. Un `remoteDir` guardado como `/` (raíz) no se respeta como configuración real: se trata como si no se hubiera fijado nunca y se vuelve a proponer `/<PC>/`.
+- En el servidor, los archivos van en una carpeta con el **alias** de la PC (ver 4.3); el cargador la crea automáticamente si no existe. `ftp_status.json` incluye `remoteDir` y la consola la muestra en la línea de detalle del FTP.
 
 ### 9.3 Verificación de conexión y estado visible
 
@@ -752,7 +758,7 @@ Notas:
 2. **Reinstalación**: volver a ejecutar `Instalar_Monitor.bat` desde la copia en `C:\ProgramData\MRV1`, cambiar el intervalo de un destino. Confirmar que el monitor se detiene y reinicia solo, sin perder los CSV existentes.
 3. **Consola**: ejecutar `Abrir_Consola.bat` mientras el monitor corre, con más de un destino configurado; verificar un bloque `DESTINO n` por cada uno. Provocar una caída y verificar que el estado, los totales y la lista de cambios de hoy se actualizan en vivo con los colores esperados. Cerrar la consola y confirmar que el monitor sigue. Verificar el bloque «CARGAS AL SERVIDOR»: sin `ftp.json`/`db_api.json` muestra `NO CONFIGURADO` en cada uno; tras instalar FTP/DB muestra `OK` con última carga y próxima, o `*** ERROR ***` con el mensaje si la conexión falla.
 4. **Apagado y arranque**: reiniciar Windows con el monitor en marcha; verificar que no aparece ningún evento `APAGADO`, que el estado abierto se cerró (o quedó `[INCOMPLETO]` si el apagado fue forzado) y que hay un nuevo `INICIO` tras el arranque.
-5. **FTP**: ejecutar `Instalar_FTP.bat` presionando solo Enter en cada pregunta. Confirmar que la carpeta remota propuesta es el nombre de la PC, que el instalador muestra «CONEXIÓN FTP CORRECTA» y cuántos archivos subió, y que en el servidor el archivo de hoy quedó en esa carpeta. Esperar a que la tarea corra sola y, al pasar la medianoche, confirmar que el archivo del día anterior aparece en `logs\cargados\` local y en el servidor.
+5. **FTP**: ejecutar `Instalar_FTP.bat` presionando solo Enter en cada pregunta. Confirmar que el asistente ya no pregunta la carpeta remota y muestra la del alias, que el instalador muestra «CONEXIÓN FTP CORRECTA» y cuántos archivos subió, y que en el servidor el archivo de hoy quedó en esa carpeta. Esperar a que la tarea corra sola y, al pasar la medianoche, confirmar que el archivo del día anterior aparece en `logs\cargados\` local y en el servidor.
 6. **API de análisis**: ejecutar `Instalar_DB.bat` presionando solo Enter en cada pregunta. Confirmar que el instalador muestra «ENVÍO A LA API CORRECTO» con filas insertadas, y que las filas aparecen en la base de datos. Repetir la corrida y confirmar que no se duplican (deduplicación por upsert).
 7. **Archivo bloqueado**: abrir un CSV activo en Excel mientras el monitor sigue corriendo; provocar un cambio de estado y confirmar que, al cerrar Excel, la fila pendiente se completa sin perder datos.
 8. **Desinstalación**: ejecutar `Desinstalar_Monitor.bat`, `Desinstalar_FTP.bat` y `Desinstalar_DB.bat`; confirmar que las tareas desaparecen, que `logs\` y `logs\cargados\` permanecen intactos, y que desaparecen el acceso directo del escritorio y las copias de los BAT en `C:\ProgramData\MRV1`.

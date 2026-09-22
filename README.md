@@ -2,7 +2,7 @@
 
 **Herramienta de monitoreo continuo de conectividad para Windows, con historial en CSV, consola en vivo y respaldo automático por FTP.**
 
-[![Versión](https://img.shields.io/badge/versión-MRV1.6-blue)](#)
+[![Versión](https://img.shields.io/badge/versión-MRV1.10-blue)](#)
 [![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078D6?logo=windows)](#)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1-5391FE?logo=powershell&logoColor=white)](#)
 [![Licencia](https://img.shields.io/badge/licencia-MIT-green)](LICENSE)
