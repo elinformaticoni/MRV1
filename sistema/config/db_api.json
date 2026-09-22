@@ -1,0 +1,10 @@
+{
+  "_nota": "Plantilla de configuracion de la carga a la API de analisis (backend/api/registros.php). Va en config\\db_api.json, separado de los scripts. A diferencia de config\\ftp.json, aqui NO se dejan credenciales reales de fabrica: el token depende del config.php que cada instalacion del backend genere (ver backend/README.md). Cuando se agregue la pregunta correspondiente a Instalar_Monitor.ps1 (subversion 1.7, pendiente), el asistente creara este archivo solo; mientras tanto se puede copiar como db_api.json y completar a mano para probar Cargador_DB.ps1 manualmente.",
+  "schemaVersion": 1,
+  "apiUrl": "https://mrv1.solucionesnicaragua.com/registros.php",
+  "token": "9dcfe2fde8aae601bb83467c145492d1b1ccc0beb1c2ff8ecd25930a604b747d",
+  "alias": "HOGAR",
+  "runEveryMin": 10,
+  "retries": 3,
+  "maxFilasPorEnvio": 300
+}

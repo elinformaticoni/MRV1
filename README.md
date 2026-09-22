@@ -2,7 +2,7 @@
 
 **Monitoreo continuo de conectividad para Windows, con historial en CSV, consola en vivo y respaldo automático por FTP.**
 
-[![Versión](https://img.shields.io/badge/versión-MRV1.6-blue)](#)
+[![Versión](https://img.shields.io/badge/versión-MRV1.9-blue)](#)
 [![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078D6?logo=windows)](#)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1-5391FE?logo=powershell&logoColor=white)](#)
 [![Licencia](https://img.shields.io/badge/licencia-MIT-green)](LICENSE)
@@ -49,7 +49,7 @@ Monitor_Red.ps1 ──► CSV (logs\) ──► Cargador_FTP.ps1 ──► Servi
 1. Descarga o clona este repositorio.
 2. Ejecuta **`Instalar_Monitor.bat`** como administrador.
 3. Indica el destino a monitorear (IP o dominio), el intervalo de ping y, si quieres, destinos adicionales.
-4. Al finalizar, la consola se abre automáticamente y te preguntará si deseas configurar también el respaldo por FTP (`Instalar_FTP.bat`).
+4. Al finalizar, la consola se abre automáticamente y te preguntará si deseas configurar también el respaldo por FTP y la carga a la base de datos (sus asistentes están en `sistema\`).
 
 Con eso el sistema queda instalado en `C:\ProgramData\MRV1`, corriendo como tarea programada desde el arranque de Windows.
 
@@ -59,7 +59,18 @@ cd MRV1
 .\Instalar_Monitor.bat
 ```
 
-> Para desinstalar en cualquier momento: `Desinstalar_Monitor.bat` y `Desinstalar_FTP.bat`. Los registros históricos nunca se borran.
+> Para desinstalar en cualquier momento: `Desinstalar_Monitor.bat` (pregunta si quita también FTP y DB). Los desinstaladores sueltos de FTP y DB están en `sistema\`. Los registros históricos nunca se borran.
+
+### Contenido del paquete
+
+```text
+MRV1\
+    Instalar_Monitor.bat      Instalador principal
+    Desinstalar_Monitor.bat   Desinstalador principal
+    Abrir_Consola.bat         Abre la consola
+    backend\                  Servidor (API + base de datos); no se instala en las PC
+    sistema\                  Scripts, asistentes de FTP/DB, configuración de referencia y la guía
+```
 
 ## 🖥️ Uso
 
@@ -111,7 +122,7 @@ Un archivo por destino y por día, delimitado por `;`, listo para abrir en Excel
 
 ## 📄 Documentación técnica
 
-La guía completa del proyecto — arquitectura, decisiones de diseño e historial de versiones — está en [`MRV1.6.md`](./MRV1.6.md).
+La guía completa del proyecto — arquitectura, decisiones de diseño e historial de versiones — está en [`sistema/MRV1.9.md`](./sistema/MRV1.9.md).
 
 ## 📝 Licencia
 

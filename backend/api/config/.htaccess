@@ -1,0 +1,5 @@
+# Bloquea el acceso HTTP directo a esta carpeta.
+# config.php solo se debe cargar vía require() desde otros scripts PHP,
+# nunca visitarse directamente (aunque al ser un "return [...]" no expone
+# nada si se ejecuta, esto es una capa extra de seguridad).
+Require all denied
