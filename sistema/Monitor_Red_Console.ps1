@@ -367,7 +367,26 @@ function Build-Screen {
     if ($sorted.Count -eq 0) {
         [void]$lines.Add(@((New-Seg '  (sin registros hoy)' 'DarkGray')))
     }
-    foreach ($e in $sorted) {
+    # Si la lista no cabe en la ventana visible, escribir mas alla del borde inferior hace que la
+    # consola desplace la ventana sola (auto-scroll) durante ESTE mismo dibujado, lo que produce un
+    # salto visible aunque la ventana ya se reancle al inicio en el siguiente ciclo (ver Draw). Se
+    # recorta a lo que cabe, dejando aviso de cuantos cambios quedan fuera; con la barra de
+    # desplazamiento del buffer se puede revisar el historial completo del dia.
+    $winH = 46
+    try { if ([Console]::WindowHeight -gt 0) { $winH = [Console]::WindowHeight } } catch { }
+    $footerLines = 3   # linea en blanco + "Q = salir" + margen de seguridad
+    $available = $winH - $lines.Count - $footerLines
+    if ($available -lt 0) { $available = 0 }
+    $shown = $sorted
+    $hidden = 0
+    if ($available -le 0) {
+        $shown = @()
+        $hidden = $sorted.Count
+    } elseif ($sorted.Count -gt $available) {
+        $shown = $sorted[0..($available - 1)]
+        $hidden = $sorted.Count - $shown.Count
+    }
+    foreach ($e in $shown) {
         $r = $e.R
         $dest = $e.Dest
         if ($e.Count -gt 1) { $dest = 'todos' }
@@ -382,6 +401,9 @@ function Build-Screen {
         $col = Get-TypeColor $r.Type $r.Incomplete
         [void]$lines.Add(@((New-Seg ('  {0}  {1,-22} ' -f $r.When.ToString('HH:mm:ss'), $dest) 'Gray'), (New-Seg ('{0,-7} ' -f $r.Type) $col), (New-Seg ('{0,-10} ' -f $dur) 'Gray'), (New-Seg ('{0,-8} ' -f $lat) 'Gray'), (New-Seg $r.Msg $col)))
     }
+    if ($hidden -gt 0) {
+        [void]$lines.Add(@((New-Seg ('  ... y {0} cambio(s) más de hoy (amplíe la ventana de la consola para verlos)' -f $hidden) 'DarkGray')))
+    }
     [void]$lines.Add(@((New-Seg '' 'Gray')))
     [void]$lines.Add(@((New-Seg 'Q = salir   (cerrar esta ventana no detiene el monitor)' 'DarkGray')))
     return $lines
@@ -393,6 +415,18 @@ function Build-Screen {
 function Draw([System.Collections.ArrayList]$lines, [int]$prevCount) {
     $w = [Console]::WindowWidth - 1
     if ($w -lt 20) { $w = 20 }
+    # La pantalla puede tener mas lineas que el alto de la ventana (p.ej. un dia con muchos
+    # cambios en "TODOS LOS CAMBIOS DE HOY"). Al escribir mas alla del borde inferior, la
+    # consola desplaza sola la ventana hacia abajo (auto-scroll). Si en el siguiente ciclo solo
+    # se reposiciona el CURSOR a (0,0) sin reposicionar tambien la VENTANA, ese punto queda fuera
+    # de lo visible y el encabezado se dibuja "detras" de la vista actual: cada segundo aparece un
+    # encabezado nuevo un poco mas abajo, dando la sensacion de que "MONITOR DE RED" se repite sin
+    # parar. Se ancla la ventana al origen del buffer antes de cada dibujado para evitar esa deriva.
+    try {
+        if (([Console]::WindowTop -ne 0) -or ([Console]::WindowLeft -ne 0)) {
+            [Console]::SetWindowPosition(0, 0)
+        }
+    } catch { }
     [Console]::SetCursorPosition(0, 0)
     foreach ($ln in $lines) {
         $used = 0
