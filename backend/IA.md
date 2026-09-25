@@ -139,6 +139,44 @@ Usan `idx_fecha` / `idx_pc_fecha`, el mismo manejador de errores JSON que `regis
 
 ---
 
+## 5.1 Configuración remota (`zombie.php`) [v1.11 — backend listo, cliente pendiente]
+
+`api/zombie.php` permite cambiar la configuración de las PC observadas (destinos, tiempos de ping, detección, frecuencia y reintentos de la API y del FTP) sin visitarlas. **El servidor manda y la PC obedece:** no existe modo «zombie sí/no» ni doble configuración local.
+
+**Instrucción por PC.** Un archivo real `api/zombie/config.<pc>.json` (nombre de PC en minúsculas y saneado a `[A-Za-z0-9._-]`), creado por el formulario al guardar. La carpeta lleva `.htaccess` con `Require all denied`: nunca se sirve directo, el acceso es solo por `zombie.php?accion=config` con token. Los archivos no van a git (`.gitignore`).
+
+```json
+{
+  "schemaVersion": 1,
+  "revision": 1790314268,
+  "generadoEn": "2026-09-24T22:31:08-06:00",
+  "targets":   [ { "address": "8.8.8.8", "intervalSec": 5, "confirmPings": 1 } ],
+  "detection": { "timeoutMs": 2000, "networkCheckSec": 5 },
+  "db":        { "runEveryMin": 180, "retries": 3 },
+  "ftp":       { "runEveryMin": 120, "retries": 3, "uploadCurrentDay": true }
+}
+```
+
+- Cada sección es **opcional**: la PC sobrescribe solo las que vengan y deja intactas las demás. Nunca hay credenciales FTP, token, URL ni alias.
+- `revision` es la marca de tiempo Unix del guardado, forzada a ser mayor que la anterior de esa PC (`max(time(), anterior + 1)`): no retrocede aunque se borre y se recree el archivo. La PC solo aplica si `revision` es mayor a la que ya aplicó.
+- **Rangos** (constante `MR_Z_LIM`): intervalo 1–3600 s, confirmación 1–10, timeout 500–10000 ms, revisión de red 1–300 s, frecuencia de la API **5–720 min** (acotada para que la PC siempre vuelva a consultar y una instrucción errónea pueda corregirse), frecuencia FTP 5–1440 min, reintentos 1–10, hasta 8 destinos.
+
+**Endpoints**
+
+| Acción | Autenticación | Respuesta |
+|---|---|---|
+| `GET zombie.php?accion=config&pc=NOMBRE` | `X-MR-Token` | El JSON de esa PC; `404` si no tiene instrucción; `422` si el nombre no es válido |
+| `POST zombie.php?accion=confirmar` `{ "pc", "revision" }` | `X-MR-Token` | `{ ok, pc, revision }`; guarda `config_rev_aplicada` y `config_aplicada_en` en `computadoras` |
+| `GET/POST zombie.php` | Sesión (misma clave y cookie que `index.php`) | Formulario de administración |
+
+**Formulario.** Tabla de todas las PC de la base con filtro, «Marcar visibles / Desmarcar todas» y edición de **varias a la vez**: se marcan las PC, se marcan las secciones a enviar, se ajustan los valores y «Guardar» escribe un archivo por PC (con su propia revisión). «Cargar valores de la primera seleccionada» precarga desde su instrucción; «Quitar instrucción» borra el archivo (las PC conservan lo que ya aplicaron). Muestra por PC «Aplicada» (con fecha) o «Pendiente». Protegido con CSRF; **queda deshabilitado si no hay `reporte.clave`** en `config.php` (a diferencia de `index.php`, no se deja abierto).
+
+**Base de datos.** `sql/002_config_remota.sql` agrega `computadoras.config_rev_aplicada` (BIGINT) y `config_aplicada_en` (DATETIME); es idempotente. Sin él, el formulario funciona pero avisa que falta y no muestra la confirmación.
+
+**Comportamiento esperado de la PC (cliente, aún sin construir):** ver `sistema/MRV1.10.md`, sección 10.6.
+
+---
+
 ## 6. Seguridad
 
 - HTTPS obligatorio (el subdominio tiene TLS 1.3 con certificado Let's Encrypt). `Cargador_DB.ps1` fuerza `TLS 1.2` como mínimo en el cliente.
@@ -157,10 +195,13 @@ MRV1/backend/
 ├── README.md                    Puesta en marcha: crear la BD, configurar la API, probar con curl
 ├── .gitignore                   Excluye api/config/config.php (credenciales reales)
 ├── sql/
-│   └── 001_crear_base.sql       Crea computadoras y registros (CREATE TABLE IF NOT EXISTS)
+│   ├── 001_crear_base.sql       Crea computadoras y registros (CREATE TABLE IF NOT EXISTS)
+│   └── 002_config_remota.sql    [v1.11] Columnas de confirmación de configuración remota (idempotente)
 └── api/                          Desplegada en https://mrv1.solucionesnicaragua.com/
     ├── index.php                Formulario SPA de análisis semanal + endpoints GET de consulta
     ├── registros.php            Endpoint POST — recibe y hace upsert de las filas
+    ├── zombie.php               [v1.11] Configuración remota: formulario multi-PC + descarga/confirmación (5.1)
+    ├── zombie/                  [v1.11] config.<pc>.json generados (no van a git); .htaccess bloquea el acceso directo
     ├── lib/
     │   ├── db.php                Conexión PDO a MySQL
     │   └── util.php              Respuestas JSON, validación de token, límite de tamaño del cuerpo,
@@ -184,6 +225,10 @@ El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desin
 5. En cada PC cliente, ejecutar `MRV1/Instalar_DB.ps1` (o responder "sí" a la pregunta correspondiente en `Instalar_Monitor.ps1`) con la URL y el token de este hosting.
 
 ## 9. Pendiente
+
+- **[v1.11] Cliente de la configuración remota:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y cuando haya un `INICIO`. Ver `sistema/MRV1.10.md` 10.6.
+- **[v1.11] Desplegar:** ejecutar `sql/002_config_remota.sql`, subir `zombie.php` y `zombie/` (con su `.htaccess`) y tener `reporte.clave` configurada.
+- **Recordatorio — optimizar cuándo se descarga la configuración** (hoy: al terminar la carga a la API y en cada `INICIO`; para una urgencia se pide reiniciar la estación).
 
 - Desplegar `api/index.php`, poner la clave de `reporte` en `config.php` del servidor y validar el gráfico con datos reales.
 - Si se necesita más de una semana a la vez: el endpoint ya acepta hasta 31 días; faltaría el selector en la página.

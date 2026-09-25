@@ -66,7 +66,20 @@ Para simular que una fila `OK` se "cierra" (como pasaría con la última fila de
 
 Qué muestra el gráfico: verde tenue = conectado, rojo = sin conexión, blanco = sin datos, azul = eventos e inicios, franja naranja = 2 o más máquinas caídas a la vez.
 
-## 5. Pendiente
+## 5. Configuración remota (`zombie.php`) [v1.11]
+
+1. Ejecuta `sql/002_config_remota.sql` sobre la misma base (es idempotente).
+2. Sube `api/zombie.php` y la carpeta `api/zombie/` (con su `.htaccess`, que bloquea el acceso directo). Necesita la clave `reporte.clave` de `config.php`: sin ella la página se deshabilita.
+3. Abre `https://mrv1.solucionesnicaragua.com/zombie.php`, marca una o varias PC, elige qué secciones enviar y guarda. El archivo de cada PC queda en `api/zombie/config.<pc>.json`.
+4. Prueba con `curl`:
+   ```bash
+   curl -H "X-MR-Token: TU_TOKEN_AQUI" "https://mrv1.solucionesnicaragua.com/zombie.php?accion=config&pc=NOMBRE-PC"
+   ```
+   Responde el JSON de esa PC, o `404` si no tiene instrucción.
+
+Las PC la aplicarán cuando exista `Sincronizar_Config.ps1` (cliente, pendiente). Detalle: `IA.md` sección 5.1.
+
+## 6. Pendiente
 
 - Configurar `'reporte' => ['clave' => …]` en el `config.php` de producción.
 - Prueba de punta a punta con varias PC reales enviando datos a la vez.

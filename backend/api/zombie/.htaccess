@@ -1,0 +1,3 @@
+# Instrucciones de configuracion remota (config.<pc>.json), generadas por zombie.php.
+# Nunca se sirven directo: el acceso es solo por zombie.php?accion=config con X-MR-Token.
+Require all denied

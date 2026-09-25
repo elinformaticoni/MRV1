@@ -640,6 +640,29 @@ Resumen:
 
 Pendiente: probar con datos reales de varias PC y dejar configurada la clave de acceso en producción.
 
+### 10.6 Configuración remota [v1.11 — servidor listo, cliente pendiente]
+
+Permite cambiar desde el servidor los destinos, tiempos de ping y otros datos de una o varias PC. **El servidor manda y la PC obedece**: no hay modo «zombie sí/no» ni configuración local paralela. Si quiere volver a otra configuración, se corrige de igual manera en el servidor. Detalle del servidor (archivo por PC, endpoints, rangos, formulario multi-selección): `backend/IA.md` sección 5.1.
+
+**Comportamiento de la PC (`Sincronizar_Config.ps1`, script separado, por construir):**
+
+| Situación | Qué hace |
+|---|---|
+| El servidor entrega una instrucción con `revision` mayor a la ya aplicada | La valida (mismos rangos que los instaladores) y **sobrescribe** los campos permitidos de `monitor.json`, `ftp.json` y `db_api.json`, solo en las secciones que vengan |
+| `404` (sin instrucción), sin red, servidor caído, JSON inválido o revisión no mayor | No hace nada: sigue con la última configuración guardada |
+
+Al aplicar:
+
+1. Si cambiaron destinos o `detection`, reinicia el monitor con la parada ordenada de 4.6. El monitor puede trabajar sin la API ni esta función (P3).
+2. Si cambió la frecuencia de `db` o `ftp`, actualiza los disparadores de `MRV1 DB` / `MRV1 FTP`.
+3. Escribe un `EVENTO` «Configuración remota aplicada (rev. N)» **antes** del nuevo `INICIO`, para acotar el estudio al momento exacto del cambio.
+4. Confirma la revisión aplicada al servidor (`POST zombie.php?accion=confirmar`), que la muestra como «Aplicada» / «Pendiente» por PC.
+5. `status.json` suma `configRevision` y `configAppliedAt`; la consola los muestra en el encabezado.
+
+**Cuándo corre:** al terminar `Cargador_DB.ps1` (al iniciar Windows y cada `runEveryMin`) y cuando haya un `INICIO` del monitor. Para una urgencia se pide al usuario que reinicie la estación. La nueva configuración **no** puede tocar credenciales FTP, token, URL ni alias. Reutiliza la URL y el token de `db_api.json`, así que una PC sin la API habilitada no recibe instrucciones (el monitor funciona igual).
+
+**Pendiente (recordatorio):** optimizar cuándo se descarga la configuración (arranque de Windows, otros eventos).
+
 ---
 
 ## 11. Manejo de errores
