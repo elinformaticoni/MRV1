@@ -276,6 +276,15 @@ function Build-Screen {
     [void]$lines.Add($hdr)
     [void]$lines.Add(@((New-Seg ('COMPUTADORA: {0}   USUARIO: {1}' -f $st.computer, $st.user) 'Gray')))
     [void]$lines.Add(@((New-Seg ('ADAPTADOR: ' + $adText) 'Gray')))
+    # [v1.11] Revision de configuracion remota ("zombie") aplicada, si Sincronizar_Config.ps1 ya
+    # aplico alguna (ver MRV1.10.md 10.6). Sin instruccion aplicada, no se muestra esta linea.
+    if ($st.configRevision) {
+        $aplicadaTxt = [string]$st.configRevision
+        if ($st.configAppliedAt) {
+            try { $aplicadaTxt += ' (aplicada ' + ([datetime]::ParseExact([string]$st.configAppliedAt, 's', [System.Globalization.CultureInfo]::InvariantCulture)).ToString('yyyy-MM-dd HH:mm:ss') + ')' } catch { }
+        }
+        [void]$lines.Add(@((New-Seg 'CONFIGURACIÓN REMOTA: rev. ' 'Gray'), (New-Seg $aplicadaTxt 'DarkCyan')))
+    }
     $sess = $now
     try { $sess = [datetime]::ParseExact([string]$st.sessionStart, 's', [System.Globalization.CultureInfo]::InvariantCulture) } catch { }
     [void]$lines.Add(@((New-Seg ('SESIÓN DESDE: {0}   TIEMPO ACTIVO: {1}' -f $sess.ToString('yyyy-MM-dd HH:mm:ss'), (Format-Dur (($now - $sess).TotalSeconds))) 'Gray')))

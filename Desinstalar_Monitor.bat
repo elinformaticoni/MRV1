@@ -16,8 +16,10 @@ echo Deteniendo y eliminando la tarea programada MRV1 Monitor...
 call :QuitarTarea "MRV1 Monitor" "Monitor_Red.ps1"
 if exist "%MRV1_ROOT%\bin\Monitor_Red.ps1" del /f /q "%MRV1_ROOT%\bin\Monitor_Red.ps1"
 if exist "%MRV1_ROOT%\bin\Monitor_Red_Console.ps1" del /f /q "%MRV1_ROOT%\bin\Monitor_Red_Console.ps1"
+if exist "%MRV1_ROOT%\bin\Sincronizar_Config.ps1" del /f /q "%MRV1_ROOT%\bin\Sincronizar_Config.ps1"
 if exist "%MRV1_ROOT%\config\monitor.json" del /f /q "%MRV1_ROOT%\config\monitor.json"
 if exist "%MRV1_ROOT%\status.json" del /f /q "%MRV1_ROOT%\status.json"
+if exist "%MRV1_ROOT%\diag\zombie_state.json" del /f /q "%MRV1_ROOT%\diag\zombie_state.json"
 
 :: ---- Cargadores FTP / DB que sigan instalados
 set HAY_EXTRAS=

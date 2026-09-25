@@ -158,7 +158,7 @@ $cfgObj = [ordered]@{
 ($cfgObj | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $monitorCfgPath -Encoding utf8 -Force
 
 $verPath = Join-Path $cfgDir 'version.json'
-([ordered]@{ schemaVersion = 1; version = '1.10' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
+([ordered]@{ schemaVersion = 1; version = '1.11' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
 
 # ---- Parada ordenada (y, si hace falta, forzada) de una instancia previa, antes de copiar los
 # scripts nuevos. Todo el bloque va en try/catch: un fallo aqui (por ejemplo, el proceso no responde)
@@ -223,7 +223,7 @@ function Copy-FromSource([string]$name, [string]$dest, [switch]$Required) {
     if ([string]::Equals($p, [System.IO.Path]::GetFullPath($dest), [System.StringComparison]::OrdinalIgnoreCase)) { return }
     Copy-Item -LiteralPath $p -Destination $dest -Force
 }
-foreach ($f in @('Monitor_Red.ps1', 'Monitor_Red_Console.ps1', 'Cargador_FTP.ps1', 'Cargador_DB.ps1')) {
+foreach ($f in @('Monitor_Red.ps1', 'Monitor_Red_Console.ps1', 'Cargador_FTP.ps1', 'Cargador_DB.ps1', 'Sincronizar_Config.ps1')) {
     Copy-FromSource $f (Join-Path $binDir $f) -Required
 }
 

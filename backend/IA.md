@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Estado | [v1.10] Capa de análisis funcionando en producción (BD + API) y `Cargador_DB.ps1` integrado al instalador de MRV1 (paquete 1.8). Formulario de análisis semanal (`api/index.php`) construido — pendiente de desplegar y probar con datos reales. |
+| Estado | [v1.11] Capa de análisis funcionando en producción (BD + API) y `Cargador_DB.ps1` integrado al instalador de MRV1 (paquete 1.8). Formulario de análisis semanal (`api/index.php`) construido — pendiente de desplegar y probar con datos reales. Configuración remota (`zombie.php` + `Sincronizar_Config.ps1`, sección 5.1) completa en servidor y cliente — pendiente desplegar `sql/002_config_remota.sql` y `zombie.php`/`zombie/` en producción (sección 9). |
 | Ubicación en el repositorio | `MRV1/backend/` — vive **dentro** del paquete `MRV1/` para mantener todo en el mismo repositorio, pero es una capa independiente: **el instalador de MRV1 nunca copia ni toca esta carpeta** al instalar en una PC cliente. |
 | Repositorio | `https://github.com/elinformaticoni/MRV1.git` |
 | API en producción | `https://mrv1.solucionesnicaragua.com/registros.php` — hosting DirectAdmin, base de datos `soluci12_MRV1`, PHP 8.3.33. |
@@ -139,7 +139,7 @@ Usan `idx_fecha` / `idx_pc_fecha`, el mismo manejador de errores JSON que `regis
 
 ---
 
-## 5.1 Configuración remota (`zombie.php`) [v1.11 — backend listo, cliente pendiente]
+## 5.1 Configuración remota (`zombie.php` + `Sincronizar_Config.ps1`) [v1.11]
 
 `api/zombie.php` permite cambiar la configuración de las PC observadas (destinos, tiempos de ping, detección, frecuencia y reintentos de la API y del FTP) sin visitarlas. **El servidor manda y la PC obedece:** no existe modo «zombie sí/no» ni doble configuración local.
 
@@ -173,7 +173,7 @@ Usan `idx_fecha` / `idx_pc_fecha`, el mismo manejador de errores JSON que `regis
 
 **Base de datos.** `sql/002_config_remota.sql` agrega `computadoras.config_rev_aplicada` (BIGINT) y `config_aplicada_en` (DATETIME); es idempotente. Sin él, el formulario funciona pero avisa que falta y no muestra la confirmación.
 
-**Comportamiento esperado de la PC (cliente, aún sin construir):** ver `sistema/MRV1.10.md`, sección 10.6.
+**Comportamiento de la PC (cliente):** implementado en `Sincronizar_Config.ps1` — ver `sistema/MRV1.11.md`, sección 10.6.
 
 ---
 
@@ -226,8 +226,8 @@ El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desin
 
 ## 9. Pendiente
 
-- **[v1.11] Cliente de la configuración remota:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y cuando haya un `INICIO`. Ver `sistema/MRV1.10.md` 10.6.
-- **[v1.11] Desplegar:** ejecutar `sql/002_config_remota.sql`, subir `zombie.php` y `zombie/` (con su `.htaccess`) y tener `reporte.clave` configurada.
+- **[v1.11] Cliente de la configuración remota — listo:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y en cada `INICIO`. Ver `sistema/MRV1.11.md` 10.6. Falta probar con una PC real contra `zombie.php`.
+- **[v1.11] Desplegar en producción:** ejecutar `sql/002_config_remota.sql`, subir `zombie.php` y `zombie/` (con su `.htaccess`) y tener `reporte.clave` configurada (ya están en el repositorio, solo falta llevarlos al hosting).
 - **Recordatorio — optimizar cuándo se descarga la configuración** (hoy: al terminar la carga a la API y en cada `INICIO`; para una urgencia se pide reiniciar la estación).
 
 - Desplegar `api/index.php`, poner la clave de `reporte` en `config.php` del servidor y validar el gráfico con datos reales.

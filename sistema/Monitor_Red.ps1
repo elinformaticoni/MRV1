@@ -38,6 +38,7 @@ $script:Net        = @{ Adapters = @{}; Active = $null }
 $script:LastActive = $null
 $script:VersionText = 'MR V1'
 $script:ShutdownOk = $false
+$script:ZombieStateFile = Join-Path $Root 'diag\zombie_state.json'   # [v1.11] config remota
 
 # ---------------------------------------------------------------------------------------------
 # Log tecnico (diag\monitor.log, con rotacion por tamano)
@@ -52,6 +53,19 @@ function Write-DiagLog([string]$msg) {
         $line = '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
         [System.IO.File]::AppendAllText($f, $line + "`r`n", $script:Utf8)
     } catch { }
+}
+
+# [v1.11] Lanza Sincronizar_Config.ps1 (configuracion remota, ver MRV1.10.md 10.6) en un
+# proceso aparte, oculto y sin esperarlo: el monitor solo hace ping (P1) y nunca debe quedar a
+# la espera de una consulta de red. Mejor esfuerzo: sin el script (paquete anterior a 1.11) o
+# ante cualquier fallo al lanzarlo, el monitor sigue exactamente igual (P3).
+function Start-ZombieSync {
+    try {
+        $script = Join-Path $script:Root 'bin\Sincronizar_Config.ps1'
+        if (-not (Test-Path -LiteralPath $script)) { return }
+        $exe = (Get-Command powershell.exe).Source
+        Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $script), '-Root', ('"{0}"' -f $script:Root)) -WindowStyle Hidden | Out-Null
+    } catch { Write-DiagLog ('No se pudo lanzar Sincronizar_Config.ps1: ' + $_.Exception.Message) }
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -408,17 +422,32 @@ function Write-Status([bool]$running) {
         $ad = $script:Net.Active
         $adObj = [ordered]@{ name = '(sin adaptador)'; type = ''; ssid = $null; ip = ''; status = 'Down' }
         if ($ad) { $adObj = [ordered]@{ name = $ad.Name; type = $ad.Type; ssid = $ad.Ssid; ip = $ad.Ip; status = 'Up' } }
+
+        # [v1.11] configRevision / configAppliedAt: los publica Sincronizar_Config.ps1 en
+        # diag\zombie_state.json cada vez que aplica una configuracion remota nueva. Lectura de
+        # mejor esfuerzo (archivo pequeno, opcional): si no existe o falla, quedan en $null.
+        $configRevision = $null; $configAppliedAt = $null
+        try {
+            if (Test-Path -LiteralPath $script:ZombieStateFile) {
+                $zs = [System.IO.File]::ReadAllText($script:ZombieStateFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                if ($zs.revisionAplicada) { $configRevision = [long]$zs.revisionAplicada }
+                if ($zs.aplicadaEn)        { $configAppliedAt = [string]$zs.aplicadaEn }
+            }
+        } catch { }
+
         $obj = [ordered]@{
-            schemaVersion = 1
-            version       = $script:VersionText
-            running       = $running
-            computer      = $script:PC
-            alias         = $script:Alias
-            user          = $script:User
-            adapter       = $adObj
-            sessionStart  = $script:SessionStart.ToString('s')
-            timestamp     = (Get-Date).ToString('s')
-            targets       = @($tl)
+            schemaVersion    = 1
+            version          = $script:VersionText
+            running          = $running
+            computer         = $script:PC
+            alias            = $script:Alias
+            user             = $script:User
+            adapter          = $adObj
+            sessionStart     = $script:SessionStart.ToString('s')
+            timestamp        = (Get-Date).ToString('s')
+            configRevision   = $configRevision
+            configAppliedAt  = $configAppliedAt
+            targets          = @($tl)
         }
         $json = $obj | ConvertTo-Json -Depth 6
         $tmp = $script:StatusFile + '.tmp'
@@ -573,6 +602,7 @@ function Add-StartRows([bool]$reopen) {
             else { Open-Row $t 'ERROR' $now (Get-ErrorMessage $t.LastCode) }
         }
     }
+    Start-ZombieSync   # [v1.11]: cada INICIO (arranque o cambio de dia) es un momento valido para revisar si hay configuracion remota nueva
 }
 
 function Invoke-Rollover([long]$nowMs) {

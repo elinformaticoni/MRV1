@@ -20,6 +20,9 @@
     - Al terminar, escribe Root\db_status.json (ultimo envio, archivos sincronizados, filas
       insertadas/actualizadas, proxima hora estimada y error si lo hubo) para que
       Monitor_Red_Console.ps1 lo pueda mostrar, igual que ya hace con ftp_status.json.
+    - [v1.11] Al terminar cada corrida, lanza Sincronizar_Config.ps1 (configuracion remota,
+      ver MRV1.10.md 10.6) en un proceso aparte, sin esperarlo: un fallo o una demora ahi
+      nunca debe retrasar ni afectar la propia carga a la API (P3).
 #>
 param([string]$Root)
 
@@ -73,6 +76,18 @@ function Write-DbStatus([bool]$ok, [int]$syncedOld, [int]$failedOld, [int]$synce
         if (Test-Path -LiteralPath $statusFile) { [System.IO.File]::Replace($tmp, $statusFile, [NullString]::Value) }
         else { [System.IO.File]::Move($tmp, $statusFile) }
     } catch { Write-Log ('No se pudo escribir db_status.json: ' + $_.Exception.Message) }
+}
+
+# [v1.11] Lanza Sincronizar_Config.ps1 en un proceso aparte (oculto, sin esperar el resultado).
+# Mejor esfuerzo: si el script no esta presente (paquete anterior a 1.11) o falla al lanzarse,
+# se registra en el log y la carga a la API sigue como si esta funcion no existiera (P3).
+function Start-ZombieSync {
+    try {
+        $script = Join-Path $Root 'bin\Sincronizar_Config.ps1'
+        if (-not (Test-Path -LiteralPath $script)) { return }
+        $exe = (Get-Command powershell.exe).Source
+        Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $script), '-Root', ('"{0}"' -f $Root)) -WindowStyle Hidden | Out-Null
+    } catch { Write-Log ('No se pudo lanzar Sincronizar_Config.ps1: ' + $_.Exception.Message) }
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -319,6 +334,7 @@ try {
     $okOverall = (($failedOld + $failedToday) -eq 0)
     Write-DbStatus $okOverall $syncedOld $failedOld $syncedToday $failedToday $script:TotalInsertadas $script:TotalActualizadas $runEveryMin $script:LastDbError
     Write-Log ('Ciclo terminado. Archivos cerrados sincronizados: {0} (fallidos: {1}). Dia en curso enviado: {2} (fallidos: {3}). Filas insertadas: {4}, actualizadas: {5}.' -f $syncedOld, $failedOld, $syncedToday, $failedToday, $script:TotalInsertadas, $script:TotalActualizadas)
+    Start-ZombieSync
 }
 catch {
     Write-Log ('Error general del cargador DB: ' + $_.Exception.Message)
