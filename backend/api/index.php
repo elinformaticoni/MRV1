@@ -9,6 +9,7 @@
  *   GET  index.php                                     → página (SPA)
  *   GET  index.php?accion=maquinas&desde=&hasta=       → máquinas con registros en el rango
  *   GET  index.php?accion=datos&desde=&hasta=&pc[]=…   → filas de esas máquinas en el rango
+ *   POST index.php?accion=eliminar_pc  {pc, csrf}      → borra una computadora y TODOS sus registros
  *   POST index.php  (clave=…)                          → inicio de sesión (si hay clave configurada)
  *   GET  index.php?salir=1                             → cerrar sesión
  *
@@ -16,7 +17,10 @@
  * la página y los endpoints exigen iniciar sesión con esa clave. Si no está
  * configurada, el acceso queda abierto y la página muestra un aviso.
  *
- * Solo LECTURA de la base de datos: este archivo nunca inserta ni modifica filas.
+ * Prácticamente de solo lectura: la única excepción es "eliminar_pc" (borra la
+ * computadora y sus registros a pedido explícito del usuario desde el formulario,
+ * ver sección "Máquinas"). Esa acción exige sesión iniciada (no está disponible en
+ * modo de acceso abierto) y un token CSRF de un solo formulario, igual que zombie.php.
  */
 
 declare(strict_types=1);
@@ -30,6 +34,16 @@ const MR_MAX_DIAS_RANGO   = 31;      // rango máximo por consulta (la SPA pide 
 const MR_MAX_PCS_CONSULTA = 100;     // máquinas por consulta de datos
 const MR_MAX_FILAS        = 200000;  // tope de filas por consulta de datos
 const MR_URL_PAQUETE      = 'https://github.com/elinformaticoni/MRV1/archive/refs/heads/main.zip'; // instalador del monitor
+const MR_ZOMBIE_DIR       = __DIR__ . '/zombie'; // instrucciones de configuración remota pendientes (ver zombie.php)
+
+/** Ruta del archivo de instrucción pendiente de una PC (mismo criterio que mr_z_ruta en zombie.php), o null si el nombre no es válido como nombre de archivo. */
+function mr_ruta_zombie(string $pc): ?string
+{
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/', $pc) || str_contains($pc, '..')) {
+        return null;
+    }
+    return MR_ZOMBIE_DIR . '/config.' . strtolower($pc) . '.json';
+}
 
 $cfg         = mr_config();
 $claveRep    = (string) ($cfg['reporte']['clave'] ?? '');
@@ -66,6 +80,15 @@ if ($requiereLog && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POS
 }
 $autenticado = !$requiereLog || !empty($_SESSION['mr_rep_ok']);
 
+// --- Token CSRF del formulario (solo tiene sentido con sesión: "eliminar_pc" lo exige) ----
+$csrf = '';
+if ($requiereLog && $autenticado) {
+    if (empty($_SESSION['mr_rep_csrf'])) {
+        $_SESSION['mr_rep_csrf'] = bin2hex(random_bytes(16));
+    }
+    $csrf = (string) $_SESSION['mr_rep_csrf'];
+}
+
 // --- Endpoints JSON -----------------------------------------------------
 $accion = (string) ($_GET['accion'] ?? '');
 if ($accion !== '') {
@@ -74,6 +97,32 @@ if ($accion !== '') {
         mr_error(401, 'Sesión no iniciada.');
     }
     header('Cache-Control: no-store');
+
+    // "eliminar_pc" no necesita rango de fechas y es la única acción que escribe en la
+    // base de datos: se resuelve aparte, antes de exigir "desde"/"hasta".
+    if ($accion === 'eliminar_pc') {
+        if (!$requiereLog) {
+            mr_error(403, 'Configure una clave de acceso ("reporte" => ["clave" => "…"] en config.php) para poder eliminar computadoras.');
+        }
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            mr_error(405, 'Método no permitido. Use POST.');
+        }
+        $body = mr_leer_cuerpo_json();
+        if (!hash_equals($csrf, (string) ($body['csrf'] ?? ''))) {
+            mr_error(403, 'La sesión del formulario venció. Recargue la página e intente de nuevo.');
+        }
+        $pc = trim((string) ($body['pc'] ?? ''));
+        if ($pc === '' || mb_strlen($pc) > 100) {
+            mr_error(422, 'Parámetro "pc" inválido.');
+        }
+        try {
+            mr_json_response(200, mr_eliminar_pc(mr_db(), $pc));
+        } catch (Throwable $e) {
+            error_log('[MR index.php eliminar_pc] ' . $e->getMessage());
+            $extra = mr_debug_habilitado() ? ['detalle' => $e->getMessage()] : [];
+            mr_error(500, 'Error interno al eliminar la computadora.', $extra);
+        }
+    }
 
     [$desde, $hasta] = mr_rango_fechas();
 
@@ -133,6 +182,45 @@ function mr_lista_pcs(): array
         mr_error(422, 'Demasiadas máquinas en una sola consulta (máx. ' . MR_MAX_PCS_CONSULTA . ').');
     }
     return $pcs;
+}
+
+/**
+ * Elimina una computadora por completo: todos sus registros (tabla `registros`) y su fila
+ * en `computadoras`, dentro de una transacción (todo o nada). También retira, de mejor
+ * esfuerzo, cualquier instrucción de configuración remota pendiente para esa PC (zombie.php,
+ * ver backend/IA.md 5.1) — si esa PC volviera a usarse, no debe recibir una instrucción de
+ * un "alguien" que ya no existe en la base de datos. Acción irreversible a pedido explícito
+ * del usuario desde el formulario (accion=eliminar_pc, exige sesión y CSRF).
+ */
+function mr_eliminar_pc(PDO $pdo, string $pc): array
+{
+    $chk = $pdo->prepare('SELECT 1 FROM computadoras WHERE pc = :pc');
+    $chk->execute(['pc' => $pc]);
+    if (!$chk->fetchColumn()) {
+        mr_error(404, 'No existe ninguna computadora con ese nombre.');
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $delReg = $pdo->prepare('DELETE FROM registros WHERE pc = :pc');
+        $delReg->execute(['pc' => $pc]);
+        $eliminados = $delReg->rowCount();
+
+        $delPc = $pdo->prepare('DELETE FROM computadoras WHERE pc = :pc');
+        $delPc->execute(['pc' => $pc]);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    $rutaZombie = mr_ruta_zombie($pc);
+    if ($rutaZombie !== null && is_file($rutaZombie)) {
+        @unlink($rutaZombie);
+    }
+
+    return ['ok' => true, 'pc' => $pc, 'registros_eliminados' => $eliminados];
 }
 
 /** Máquinas (pc + alias) con registros en el rango, con sus destinos y días con datos. */
@@ -250,8 +338,8 @@ header('X-Frame-Options: SAMEORIGIN');
 :root{
   --bg:#f4f6f8; --panel:#ffffff; --texto:#1f2933; --suave:#5f6b7a; --tenue:#8a95a3;
   --borde:#dde3ea; --grid:#e8edf2; --acento:#0f6cbd; --acento-t:#ffffff;
-  --ok:rgba(22,163,74,.16); --ok-wifi:rgba(22,163,74,.38); --err:#d92d20; --inc:#9aa4b1; --wifi:#2f6fde; --cable:#7a4cc2; --sinred:#b8c0ca;
-  --ev:#2563eb; --ini:#60a5fa; --coin:rgba(234,88,12,.16); --coin-borde:rgba(234,88,12,.75); --verde:#16a34a; --banda-ok:rgba(22,163,74,.09); --banda-ok-borde:rgba(22,163,74,.35);
+  --ok:rgba(22,163,74,.34); --ok-wifi:rgba(22,163,74,.60); --err:#d92d20; --inc:#9aa4b1; --wifi:#2f6fde; --cable:#7a4cc2; --sinred:#b8c0ca;
+  --ev:#2563eb; --ini:#60a5fa; --coin:rgba(245,158,11,.20); --coin-borde:rgba(217,119,6,.6); --verde:#16a34a; --banda-ok:rgba(22,163,74,.09); --banda-ok-borde:rgba(22,163,74,.35);
   --pista:#f8fafc; --sombra:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
   color-scheme:light;
 }
@@ -259,16 +347,16 @@ header('X-Frame-Options: SAMEORIGIN');
   :root:not([data-theme="light"]){
     --bg:#11161c; --panel:#1a2129; --texto:#e6ebf0; --suave:#a9b4c0; --tenue:#7b8794;
     --borde:#2c3642; --grid:#27313c; --acento:#4c9be8; --acento-t:#0b1520;
-    --ok:rgba(50,213,131,.10); --ok-wifi:rgba(50,213,131,.26); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
-    --ev:#5b8def; --ini:#93b8f5; --coin:rgba(251,146,60,.16); --coin-borde:rgba(251,146,60,.8); --verde:#32d583; --banda-ok:rgba(50,213,131,.08); --banda-ok-borde:rgba(50,213,131,.35);
+    --ok:rgba(50,213,131,.26); --ok-wifi:rgba(50,213,131,.48); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
+    --ev:#5b8def; --ini:#93b8f5; --coin:rgba(251,191,36,.20); --coin-borde:rgba(251,191,36,.6); --verde:#32d583; --banda-ok:rgba(50,213,131,.08); --banda-ok-borde:rgba(50,213,131,.35);
     --pista:#151b22; --sombra:none; color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
   --bg:#11161c; --panel:#1a2129; --texto:#e6ebf0; --suave:#a9b4c0; --tenue:#7b8794;
   --borde:#2c3642; --grid:#27313c; --acento:#4c9be8; --acento-t:#0b1520;
-  --ok:rgba(50,213,131,.10); --ok-wifi:rgba(50,213,131,.26); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
-  --ev:#5b8def; --ini:#93b8f5; --coin:rgba(251,146,60,.16); --coin-borde:rgba(251,146,60,.8); --verde:#32d583; --banda-ok:rgba(50,213,131,.08); --banda-ok-borde:rgba(50,213,131,.35);
+  --ok:rgba(50,213,131,.26); --ok-wifi:rgba(50,213,131,.48); --err:#f04438; --inc:#5e6a77; --wifi:#5b8def; --cable:#a07ae0; --sinred:#4a5561;
+  --ev:#5b8def; --ini:#93b8f5; --coin:rgba(251,191,36,.20); --coin-borde:rgba(251,191,36,.6); --verde:#32d583; --banda-ok:rgba(50,213,131,.08); --banda-ok-borde:rgba(50,213,131,.35);
   --pista:#151b22; --sombra:none; color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -310,12 +398,19 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 .dia-chk:has(input:checked){border-color:var(--acento);background:color-mix(in srgb,var(--acento) 12%,transparent)}
 .dia-chk:has(input:focus-visible){outline:2px solid var(--acento);outline-offset:2px}
 .maqs{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
-.maq{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--borde);border-radius:8px;padding:8px 10px;cursor:pointer}
+.maq{position:relative;display:flex;gap:9px;align-items:flex-start;border:1px solid var(--borde);border-radius:8px;padding:8px 26px 8px 10px;cursor:pointer}
 .maq:has(input:checked){border-color:var(--acento);background:color-mix(in srgb,var(--acento) 8%,transparent)}
 .maq input{margin-top:3px}
 .maq .nom{font-weight:600;overflow-wrap:anywhere}
 .maq .pc{font-size:12px;color:var(--suave)}
 .maq .dests{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.maq-menu-btn{position:absolute;top:3px;right:3px;width:20px;height:20px;padding:0;line-height:1;border:1px solid transparent;background:transparent;color:var(--tenue);border-radius:6px;cursor:pointer;font-size:14px}
+.maq-menu-btn:hover{border-color:var(--borde);background:var(--grid);color:var(--suave)}
+.maq-menu{position:absolute;top:25px;right:3px;z-index:6;min-width:200px;background:var(--panel);border:1px solid var(--borde);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.2);padding:4px;display:none}
+.maq-menu.abierto{display:block}
+.maq-menu button{display:block;width:100%;text-align:left;background:transparent;border:0;border-radius:6px;padding:7px 9px;font:inherit;font-size:13px;cursor:pointer;color:var(--texto)}
+.maq-menu button:hover{background:var(--grid)}
+.maq-menu button.pel{color:var(--err)}
 .chip{font-size:11px;border:1px solid var(--borde);border-radius:999px;padding:1px 7px;color:var(--suave);white-space:nowrap}
 .chip.err{border-color:color-mix(in srgb,var(--err) 50%,transparent);color:var(--err)}
 .vacio{color:var(--suave);font-size:13px;padding:10px 0}
@@ -462,7 +557,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
             <button class="btn chico" id="maqNinguna" type="button">Ninguna</button>
           </span>
         </span>
-        <div class="maqs" id="maqs"><div class="vacio">Cargando…</div></div>
+        <div class="maqs" id="maqs" data-csrf="<?= $h($csrf) ?>" data-puede-eliminar="<?= $requiereLog ? '1' : '0' ?>"><div class="vacio">Cargando…</div></div>
       </div>
       <div class="bloque ancho">
         <div class="opciones">
@@ -1006,8 +1101,39 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     dias: [true, true, true, true, true, false, false],   // Lun–Vie por defecto
     ini: 7 * 3600, fin: 15 * 3600,                        // 7:00 a 15:00 por defecto
     maquinas: [], seleccion: {}, datos: null, datosClave: '',
-    redes: { cable: true, wifi: false }   // Wi-Fi oculto por defecto (se cambia en el reporte)
+    redes: { cable: true, wifi: true }   // Wi-Fi visible por defecto, bandeado para distinguirlo del cable (se cambia en el reporte)
   };
+
+  // ---- Recordar la cabecera (semana, días, horario, máquinas, opciones) entre recargas -----
+  // De mejor esfuerzo: si localStorage no está disponible (privado, cuota, etc.) el formulario
+  // simplemente vuelve a los valores por defecto de siempre, sin romper nada.
+  var LS_CLAVE = 'mrv1_form_v1';
+  function guardarForm() {
+    try {
+      localStorage.setItem(LS_CLAVE, JSON.stringify({
+        v: 1, lunes: estado.lunes, dias: estado.dias, ini: estado.ini, fin: estado.fin, seleccion: estado.seleccion,
+        opciones: { coin: $('optCoin').checked, eventos: $('optEventos').checked, vacias: $('optVacias').checked }
+      }));
+    } catch (e) { }
+  }
+  function cargarForm() {
+    try {
+      var raw = localStorage.getItem(LS_CLAVE);
+      if (!raw) return;
+      var g = JSON.parse(raw);
+      if (typeof g.lunes === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(g.lunes)) estado.lunes = lunesDe(g.lunes);
+      if (Array.isArray(g.dias) && g.dias.length === 7) estado.dias = g.dias.map(function (x) { return !!x; });
+      if (typeof g.ini === 'number' && typeof g.fin === 'number' && g.ini >= 0 && g.fin <= 86400 && g.fin > g.ini) {
+        estado.ini = g.ini; estado.fin = g.fin;
+      }
+      if (g.seleccion && typeof g.seleccion === 'object') estado.seleccion = g.seleccion;
+      if (g.opciones) {
+        if (typeof g.opciones.coin === 'boolean') $('optCoin').checked = g.opciones.coin;
+        if (typeof g.opciones.eventos === 'boolean') $('optEventos').checked = g.opciones.eventos;
+        if (typeof g.opciones.vacias === 'boolean') $('optVacias').checked = g.opciones.vacias;
+      }
+    } catch (e) { }
+  }
 
   // ---- Horario --------------------------------------------------------
   (function () {
@@ -1021,12 +1147,12 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   function cambiarHorario(cual) {
     var a = +$('horaIni').value, b = +$('horaFin').value;
     if (b <= a) { if (cual === 'ini') b = Math.min(86400, a + 3600); else a = Math.max(0, b - 3600); }
-    estado.ini = a; estado.fin = b; pintarHorario(); rerender();
+    estado.ini = a; estado.fin = b; pintarHorario(); rerender(); guardarForm();
   }
   $('horaIni').onchange = function () { cambiarHorario('ini'); };
   $('horaFin').onchange = function () { cambiarHorario('fin'); };
-  $('horaJornada').onclick = function () { estado.ini = 7 * 3600; estado.fin = 15 * 3600; pintarHorario(); rerender(); };
-  $('horaDia').onclick = function () { estado.ini = 0; estado.fin = 86400; pintarHorario(); rerender(); };
+  $('horaJornada').onclick = function () { estado.ini = 7 * 3600; estado.fin = 15 * 3600; pintarHorario(); rerender(); guardarForm(); };
+  $('horaDia').onclick = function () { estado.ini = 0; estado.fin = 86400; pintarHorario(); rerender(); guardarForm(); };
 
   // ---- Semana y días ----------------------------------------------------
   function diasConDatos() {
@@ -1046,7 +1172,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       var lab = document.createElement('label'); lab.className = 'dia-chk' + (cd[f] ? ' con-datos' : '');
       lab.title = cd[f] ? 'Con registros' : 'Sin registros de las máquinas seleccionadas';
       var c = document.createElement('input'); c.type = 'checkbox'; c.checked = estado.dias[i];
-      c.onchange = function () { estado.dias[i] = c.checked; rerender(); };
+      c.onchange = function () { estado.dias[i] = c.checked; rerender(); guardarForm(); };
       var a = document.createElement('span'); a.className = 'n'; a.textContent = n;
       var b = document.createElement('span'); b.className = 'd'; b.textContent = parseISO(f).getUTCDate();
       var p = document.createElement('span'); p.className = 'pt';
@@ -1056,7 +1182,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   function irSemana(lunes) {
     estado.lunes = lunes; estado.datos = null; estado.datosClave = '';
     $('reporte').textContent = ''; $('descargar').disabled = true;
-    pintarSemana(); cargarMaquinas();
+    pintarSemana(); cargarMaquinas(); guardarForm();
   }
   $('semAnt').onclick = function () { irSemana(sumar(estado.lunes, -7)); };
   $('semSig').onclick = function () { irSemana(sumar(estado.lunes, 7)); };
@@ -1097,8 +1223,32 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       $('maqs').innerHTML = ''; var d = document.createElement('div'); d.className = 'vacio'; d.textContent = 'No se pudo cargar: ' + e.message; $('maqs').appendChild(d);
     });
   }
+  function cerrarMenusMaquina() {
+    document.querySelectorAll('.maq-menu.abierto').forEach(function (x) { x.classList.remove('abierto'); });
+  }
+  document.addEventListener('click', cerrarMenusMaquina);
+
+  function eliminarMaquina(m) {
+    var nombre = (m.alias && m.alias !== m.pc) ? (m.alias + ' (' + m.pc + ')') : m.pc;
+    if (!confirm('¿Eliminar "' + nombre + '" por completo?\n\nEsto borra TODOS sus registros históricos de la base de datos y no se puede deshacer.')) return;
+    var csrf = $('maqs').dataset.csrf;
+    aviso('Eliminando "' + nombre + '"…');
+    fetch('index.php?accion=eliminar_pc', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pc: m.pc, csrf: csrf })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; });
+    }).then(function (res) {
+      if (!res.ok || !res.j || !res.j.ok) { aviso('No se pudo eliminar: ' + (res.j && res.j.error ? res.j.error : 'error desconocido'), true); return; }
+      delete estado.seleccion[m.pc];
+      estado.maquinas = estado.maquinas.filter(function (x) { return x.pc !== m.pc; });
+      pintarMaquinas(); pintarSemana();
+      aviso('Se eliminó "' + nombre + '" y ' + res.j.registros_eliminados + ' registro(s).');
+    }).catch(function (e) { aviso('No se pudo eliminar: ' + e.message, true); });
+  }
+
   function pintarMaquinas() {
-    var c = $('maqs'); c.textContent = '';
+    var c = $('maqs'); var puedeEliminar = c.dataset.puedeEliminar === '1'; c.textContent = '';
     if (!estado.maquinas.length) {
       var v = document.createElement('div'); v.className = 'vacio'; v.textContent = 'Ninguna máquina envió registros en esta semana.'; c.appendChild(v);
       return;
@@ -1106,7 +1256,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     estado.maquinas.forEach(function (m) {
       var lab = document.createElement('label'); lab.className = 'maq';
       var chk = document.createElement('input'); chk.type = 'checkbox'; chk.checked = !!estado.seleccion[m.pc];
-      chk.onchange = function () { estado.seleccion[m.pc] = chk.checked; pintarSemana(); };
+      chk.onchange = function () { estado.seleccion[m.pc] = chk.checked; pintarSemana(); guardarForm(); };
       var info = document.createElement('div'); info.style.minWidth = '0';
       var nom = document.createElement('div'); nom.className = 'nom'; nom.textContent = m.alias || m.pc;
       var pc = document.createElement('div'); pc.className = 'pc';
@@ -1118,11 +1268,27 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
         ch.title = d.registros + ' registros, ' + d.errores + ' con ERROR en la semana';
         ds.appendChild(ch);
       });
-      info.append(nom, pc, ds); lab.append(chk, info); c.appendChild(lab);
+      info.append(nom, pc, ds); lab.append(chk, info);
+      if (puedeEliminar) {
+        var menu = document.createElement('div'); menu.className = 'maq-menu';
+        var elim = document.createElement('button'); elim.type = 'button'; elim.className = 'pel'; elim.textContent = 'Eliminar computadora…';
+        elim.onclick = function (e) { e.preventDefault(); e.stopPropagation(); cerrarMenusMaquina(); eliminarMaquina(m); };
+        menu.appendChild(elim);
+        var menuBtn = document.createElement('button'); menuBtn.type = 'button'; menuBtn.className = 'maq-menu-btn';
+        menuBtn.textContent = '⋯'; menuBtn.title = 'Más opciones';
+        menuBtn.onclick = function (e) {
+          e.preventDefault(); e.stopPropagation();
+          var abierto = menu.classList.contains('abierto');
+          cerrarMenusMaquina();
+          if (!abierto) menu.classList.add('abierto');
+        };
+        lab.append(menuBtn, menu);
+      }
+      c.appendChild(lab);
     });
   }
-  $('maqTodas').onclick = function () { estado.maquinas.forEach(function (m) { estado.seleccion[m.pc] = true; }); pintarMaquinas(); pintarSemana(); };
-  $('maqNinguna').onclick = function () { estado.maquinas.forEach(function (m) { estado.seleccion[m.pc] = false; }); pintarMaquinas(); pintarSemana(); };
+  $('maqTodas').onclick = function () { estado.maquinas.forEach(function (m) { estado.seleccion[m.pc] = true; }); pintarMaquinas(); pintarSemana(); guardarForm(); };
+  $('maqNinguna').onclick = function () { estado.maquinas.forEach(function (m) { estado.seleccion[m.pc] = false; }); pintarMaquinas(); pintarSemana(); guardarForm(); };
 
   // ---- Generar -----------------------------------------------------------
   function seleccionadas() { return estado.maquinas.filter(function (m) { return estado.seleccion[m.pc]; }).map(function (m) { return m.pc; }); }
@@ -1144,7 +1310,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     aviso('');
     MR.render(estado.datos, o, $('reporte'));
   }
-  ['optCoin', 'optEventos', 'optVacias'].forEach(function (id) { $(id).onchange = rerender; });
+  ['optCoin', 'optEventos', 'optVacias'].forEach(function (id) { $(id).onchange = function () { rerender(); guardarForm(); }; });
 
   $('generar').onclick = function () {
     var pcs = seleccionadas();
@@ -1190,6 +1356,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   };
 
   // ---- Inicio -------------------------------------------------------------
+  cargarForm();
   pintarHorario(); pintarSemana(); cargarMaquinas();
 })();
 </script>

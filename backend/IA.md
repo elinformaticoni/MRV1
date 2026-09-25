@@ -102,38 +102,41 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 
 ## 5. Formulario de análisis semanal (`index.php`)
 
-`api/index.php` — se abre directo en `https://mrv1.solucionesnicaragua.com/` (junto a `registros.php`). Un solo archivo: página SPA + endpoints JSON de consulta (solo lectura de la BD).
+`api/index.php` — se abre directo en `https://mrv1.solucionesnicaragua.com/` (junto a `registros.php`). Un solo archivo: página SPA + endpoints JSON de consulta. Prácticamente de solo lectura de la BD; la única excepción es `accion=eliminar_pc` [v1.11], ver más abajo.
 
 **Formulario (de arriba abajo):**
 
 1. **Semana** — se trabaja por semana (lunes a domingo) para no saturar de datos: calendario (cualquier día elige su semana), ◀ ▶ y «Esta semana». Por defecto, la semana actual.
 2. **Días** — checklist Lun…Dom, **Lun–Vie marcados por defecto**. Un punto verde indica los días con registros de las máquinas seleccionadas.
 3. **Horario (eje horizontal)** — desde/hasta cada 30 min, **07:00–15:00 por defecto**; botones «Jornada» (7–15) y «Día completo» (0–24).
-4. **Máquinas** — solo las que tienen registros en la semana (alias + nombre de PC, días con datos, un chip por destino con su cantidad de ERROR). Todas marcadas por defecto; «Todas» / «Ninguna». Son el eje vertical.
+4. **Máquinas** — solo las que tienen registros en la semana (alias + nombre de PC, días con datos, un chip por destino con su cantidad de ERROR). Todas marcadas por defecto; «Todas» / «Ninguna». Son el eje vertical. Con sesión iniciada, cada tarjeta tiene un menú «⋯» con **«Eliminar computadora…»** [v1.11]: borra esa PC y todos sus registros de la base de datos (irreversible, pide confirmación) — ver más abajo.
 5. Opciones: marcar coincidencias (activo), mostrar eventos e inicios (activo), incluir días sin registros.
 6. **Generar gráfico** consulta los datos de la semana; cambiar días, horario u opciones redibuja al instante sin volver a consultar. **Descargar HTML** genera el reporte autocontenido.
+7. **Persistencia de la cabecera [v1.11]:** semana, días, horario, selección de máquinas y las tres casillas de opciones se guardan en `localStorage` (`mrv1_form_v1`) cada vez que cambian, y se restauran al cargar la página — de mejor esfuerzo (si `localStorage` no está disponible, el formulario simplemente vuelve a los valores por defecto). No aplica a las máquinas mismas (siguen viniendo del servidor por semana) ni a la visibilidad Cable/Wi-Fi del reporte descargable.
 
 **Gráfico (motor en `<script id="motor">`, reutilizado tal cual en el HTML descargable):**
 
 - Un bloque por día; dentro, una franja por máquina y, si la máquina tiene varios destinos, **una fila por destino, una encima de la otra en el mismo eje**. Sin filas auxiliares: solo destinos.
 - Colores: **verde tenue translúcido** = hay registros y conectado (OK); **rojo** = sin conexión (ERROR, mín. 2 px para que se vea una caída corta); **en blanco** = sin datos (sin registros, o fila sin cerrar por apagado abrupto hasta la fila siguiente). Estado en curso de hoy: su color con rayado claro hasta la hora actual (no se suma). **Azul** = marcas verticales de eventos (cambio de adaptador, IP, interfaz) y, más claro, inicios del monitor.
-- **Coincidencias (naranja):** franja vertical que atraviesa todo el día donde **2 o más máquinas distintas** están en ERROR al mismo tiempo (cualquiera de sus destinos; varios destinos de una misma máquina no cuentan como coincidencia), con tolerancia de 5 s a cada lado porque cada monitor hace ping con su propio intervalo. Sirve para ubicar el problema en la red común y no en una estación. Marca en el eje con tooltip (hora, duración, máquinas) y contador en la cabecera del día.
+- **Coincidencias (ámbar):** franja vertical que atraviesa todo el día donde **2 o más máquinas distintas** están en ERROR al mismo tiempo (cualquiera de sus destinos; varios destinos de una misma máquina no cuentan como coincidencia), con tolerancia de 5 s a cada lado porque cada monitor hace ping con su propio intervalo. Sirve para ubicar el problema en la red común y no en una estación. Marca en el eje con tooltip (hora, duración, máquinas) y contador en la cabecera del día. Color ámbar (`--coin`/`--coin-borde`, deliberadamente alejado del rojo de ERROR) para que no se confundan a simple vista [v1.11].
 - Tooltip de cada tramo: destino, estado, hora inicio–fin, duración, latencia, mensaje y la red que usaba la máquina en ese momento (Wi-Fi/cable, tomado del `INICIO` y de los `EVENTO` «Cambio de adaptador: A -> B»).
+- **Ajuste visual [v1.11]:** ambas redes (Cable/Wi-Fi) visibles por defecto (antes Wi-Fi quedaba oculto), con el tramo por Wi-Fi bandeado (verde con bandas claras) para distinguirlo del cable sin ocultar datos; se subió la opacidad del verde OK (`--ok`/`--ok-wifi`) para que se note con el tramo ya cerrado.
 - Días / máquinas sin caídas en el horario: distintivo «✓ Sin caídas» en la cabecera del día o junto al nombre de la máquina.
 - Columna derecha **«Desconectado»**: suma de `ERROR` cerrados dentro del horario por destino, con la cantidad de caídas. Cabecera del día: caídas y suma total.
 - Al final, **resumen del periodo**: máquina × destino × día seleccionado, total, caídas y disponibilidad (% OK sobre OK+ERROR dentro del horario).
 - La duración de cada estado se toma de `tiempo_s`, limitada al inicio de la fila siguiente (que no sea `EVENTO`); todo se recorta al horario elegido.
 
-**Endpoints JSON** (mismo archivo, `GET`):
+**Endpoints JSON** (mismo archivo):
 
-| Acción | Parámetros | Respuesta |
-|---|---|---|
-| `?accion=maquinas` | `desde`, `hasta` (AAAA-MM-DD, máx. 31 días) | `{ ok, maquinas: [{ pc, alias, destinos: [{ destino, registros, errores }], dias: [...] }] }` |
-| `?accion=datos` | `desde`, `hasta`, `pc[]` (1–100) | `{ ok, filas, maquinas: [{ pc, alias, destinos: [{ destino, filas: [[fecha, hora, tipo, tiempo_s, latencia_ms, mensaje], ...] }] }] }` — tope 200 000 filas |
+| Acción | Método | Parámetros | Respuesta |
+|---|---|---|---|
+| `?accion=maquinas` | GET | `desde`, `hasta` (AAAA-MM-DD, máx. 31 días) | `{ ok, maquinas: [{ pc, alias, destinos: [{ destino, registros, errores }], dias: [...] }] }` |
+| `?accion=datos` | GET | `desde`, `hasta`, `pc[]` (1–100) | `{ ok, filas, maquinas: [{ pc, alias, destinos: [{ destino, filas: [[fecha, hora, tipo, tiempo_s, latencia_ms, mensaje], ...] }] }] }` — tope 200 000 filas |
+| `?accion=eliminar_pc` [v1.11] | POST, cuerpo JSON `{ pc, csrf }` | — | `{ ok, pc, registros_eliminados }`. Borra, en una transacción, todas las filas de `registros` de esa PC y su fila en `computadoras`; también retira (mejor esfuerzo) cualquier instrucción de configuración remota pendiente (`zombie/config.<pc>.json`, sección 5.1). Exige sesión iniciada (403 sin ella, sin importar el modo de acceso) y el token CSRF de sesión (`$_SESSION['mr_rep_csrf']`, el mismo patrón que `zombie.php`); `404` si la PC no existe. |
 
-Usan `idx_fecha` / `idx_pc_fecha`, el mismo manejador de errores JSON que `registros.php` y respetan `debug`.
+`maquinas`/`datos` usan `idx_fecha` / `idx_pc_fecha`, el mismo manejador de errores JSON que `registros.php` y respetan `debug`.
 
-**Control de acceso:** `config.php` → `'reporte' => ['clave' => '…']`. Con clave: pide iniciar sesión (sesión PHP, cookie `HttpOnly`/`SameSite=Lax`, `Secure` bajo HTTPS; comparación con `hash_equals`; «Cerrar sesión» = `?salir=1`); los endpoints responden 401 sin sesión. Sin clave (o si falta la entrada): acceso abierto con un aviso amarillo en la página.
+**Control de acceso:** `config.php` → `'reporte' => ['clave' => '…']`. Con clave: pide iniciar sesión (sesión PHP, cookie `HttpOnly`/`SameSite=Lax`, `Secure` bajo HTTPS; comparación con `hash_equals`; «Cerrar sesión» = `?salir=1`); los endpoints responden 401 sin sesión. Sin clave (o si falta la entrada): acceso abierto con un aviso amarillo en la página — pero `eliminar_pc` sigue exigiendo sesión (403) en ese modo: sin clave configurada, nadie puede eliminar computadoras desde el formulario.
 
 **HTML descargable:** un solo archivo (`MRV1 analisis AAAA-MM-DD al AAAA-MM-DD.html`) con CSS, motor y datos embebidos; sin dependencias externas, funciona sin conexión, modo claro/oscuro y en celular. Es un snapshot cerrado (días, horario y opciones del momento de generarlo).
 
