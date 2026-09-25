@@ -660,7 +660,7 @@ Permite cambiar desde el servidor los destinos, tiempos de ping y otros datos de
 Al aplicar:
 
 1. Si cambiaron destinos o `detection`, escribe un `EVENTO` «Configuración remota aplicada (rev. N)» en el CSV de hoy de cada destino anterior y reinicia el monitor con la parada ordenada de 4.6 (nuevo `INICIO` al arrancar). El monitor puede trabajar sin la API ni esta función (P3); un cambio solo de frecuencia de `db`/`ftp` no lo reinicia.
-2. Si cambió la frecuencia de `db` o `ftp`, ajusta el disparador de repetición de la tarea `MRV1 DB` / `MRV1 FTP` correspondiente (sin tocar su disparador de inicio de Windows ni ninguna otra propiedad).
+2. Si cambió la frecuencia de `db` o `ftp`, ajusta el disparador de repetición de la tarea `MRV1 DB` / `MRV1 FTP` correspondiente (sin tocar su disparador de inicio de Windows ni ninguna otra propiedad). **Corrección [v1.11.1]:** ese ajuste reafirma también el mismo *Principal* (SYSTEM, «ejecutar el usuario haya iniciado sesión o no») y *Settings* que usan `Instalar_DB.ps1`/`Instalar_FTP.ps1` al registrar la tarea — `Set-ScheduledTask` con solo `-Trigger` no garantiza preservarlos, y en producción dejó la tarea `MRV1 DB` sin poder correr desatendida tras un cambio de configuración remota (ver «Manejo de errores», sección 11).
 3. Confirma la revisión aplicada al servidor (`POST zombie.php?accion=confirmar`), que la muestra como «Aplicada» / «Pendiente» por PC, y guarda el resultado en `diag\zombie_state.json` (si el servidor no respondió, la próxima corrida reintenta confirmar antes de seguir).
 4. `status.json` suma `configRevision` y `configAppliedAt` (leídos de `diag\zombie_state.json`); la consola los muestra bajo el adaptador, como «CONFIGURACIÓN REMOTA: rev. N (aplicada …)», solo si ya se aplicó alguna.
 
@@ -688,6 +688,7 @@ Un error en un componente no debe provocar innecesariamente el cierre de todo el
 | Error de FTP, servidor inaccesible o archivo parcial | Reintentos; el archivo sigue pendiente; se anota en `ftp_worker.log` |
 | Error de la API de análisis, servidor inaccesible o token inválido | Reintentos; el archivo/fila sigue pendiente para la próxima corrida; se anota en `db_worker.log`; el monitor y el FTP no se ven afectados |
 | Tarea programada inexistente | El desinstalador lo tolera; el instalador la crea |
+| Configuración remota cambia la frecuencia de `MRV1 DB`/`MRV1 FTP` [v1.11.1] | `Sincronizar_Config.ps1` reafirma explícitamente el Principal (SYSTEM) y Settings de la tarea al ajustar su disparador, para que no quede sin poder correr desatendida (bug detectado y corregido: `Set-ScheduledTask` con solo `-Trigger` no garantiza preservarlos); si aun así queda mal, registra un AVISO en `diag\zombie_worker.log` |
 | Ejecución sin privilegios suficientes | El BAT solicita elevación; si se rechaza, avisa y sale sin cambios parciales |
 
 ---

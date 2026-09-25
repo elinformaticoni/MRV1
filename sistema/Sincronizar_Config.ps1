@@ -162,13 +162,34 @@ function Restart-Monitor {
 
 # Ajusta solo la repeticion (runEveryMin) de una tarea programada existente, sin tocar su
 # disparador de inicio de Windows ni ninguna otra propiedad.
+#
+# [v1.11.1] IMPORTANTE: Set-ScheduledTask, cuando se le pasa solo -Trigger (sin -Principal ni
+# -Settings), no tiene un comportamiento documentado de preservar el principal/contexto de
+# seguridad de la tarea (ver "Set-ScheduledTask" en Microsoft Learn: la propia documentacion no
+# garantiza que Principal/Settings queden intactos si se omiten). En la practica esto reinicio
+# la tarea "MRV1 DB" tras aplicar una configuracion remota: quedo con un principal/contexto que
+# ya no corria desatendida (sin usuario con sesion iniciada), y dejo de dispararse en su
+# horario aunque el disparador en si quedara bien formado. Por eso aqui se reafirman
+# EXPLICITAMENTE el mismo Principal y Settings que usan Instalar_DB.ps1 / Instalar_FTP.ps1 al
+# registrar la tarea (SYSTEM, RunLevel maximo, "ejecutar el usuario haya iniciado sesion o no"),
+# para que un cambio de frecuencia nunca pueda dejar la tarea sin poder correr desatendida.
 function Update-TaskFrequency([string]$taskName, [int]$runEveryMin) {
     try {
         $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         if (-not $task) { Write-Log ('No se encontro la tarea "{0}"; no se ajusta su frecuencia.' -f $taskName); return }
         $trigStart = New-ScheduledTaskTrigger -AtStartup
         $trigRep   = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes $runEveryMin) -RepetitionDuration (New-TimeSpan -Days 3650)
-        Set-ScheduledTask -TaskName $taskName -Trigger @($trigStart, $trigRep) | Out-Null
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
+        Set-ScheduledTask -TaskName $taskName -Trigger @($trigStart, $trigRep) -Principal $principal -Settings $settings | Out-Null
+        # Verificacion: si por lo que sea la tarea quedo sin poder correr desatendida, que quede
+        # registrado (mejor esfuerzo; nunca detiene el resto del proceso).
+        try {
+            $t2 = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+            if ($t2 -and $t2.Principal -and ($t2.Principal.LogonType -ne 'ServiceAccount')) {
+                Write-Log ('AVISO: la tarea "{0}" quedo con LogonType "{1}" (se esperaba ServiceAccount/SYSTEM); revisar en el Programador de tareas.' -f $taskName, $t2.Principal.LogonType)
+            }
+        } catch { }
         Write-Log ('Frecuencia de la tarea "{0}" ajustada a cada {1} min.' -f $taskName, $runEveryMin)
     } catch {
         Write-Log ('No se pudo ajustar la frecuencia de la tarea "{0}": {1}' -f $taskName, $_.Exception.Message)
