@@ -1,8 +1,8 @@
 {
     "schemaVersion":  2,
-    "version":  "1.13.6",
-    "generado":  "2026-10-29T02:46:49",
-    "commit":  "06bcb77fe9a5fb740a8102d1e28094b7c749ef7c",
+    "version":  "1.13.7",
+    "generado":  "2026-10-29T02:48:05",
+    "commit":  "9ab734d0a8b33a1f46f3f7b6680f62890297da5c",
     "files":  [
                   {
                       "name":  "Monitor_Red.ps1",
@@ -88,8 +88,8 @@
                       "name":  "Instalar_Monitor.ps1",
                       "dest":  "root",
                       "path":  "sistema/Instalar_Monitor.ps1",
-                      "sha256":  "9c73397f6fd6ff47dfb0c391e4e5dfa8da03bbee027e0da4190cceb3f2ef5df5",
-                      "sha256lf":  "9c73397f6fd6ff47dfb0c391e4e5dfa8da03bbee027e0da4190cceb3f2ef5df5",
+                      "sha256":  "7efb739e7007b9babe63124231ff967adc12f5bafdb520e1b23f2d843192fe13",
+                      "sha256lf":  "7efb739e7007b9babe63124231ff967adc12f5bafdb520e1b23f2d843192fe13",
                       "size":  18296
                   },
                   {
