@@ -20,6 +20,7 @@ if exist "%MRV1_ROOT%\bin\Sincronizar_Config.ps1" del /f /q "%MRV1_ROOT%\bin\Sin
 if exist "%MRV1_ROOT%\config\monitor.json" del /f /q "%MRV1_ROOT%\config\monitor.json"
 if exist "%MRV1_ROOT%\status.json" del /f /q "%MRV1_ROOT%\status.json"
 if exist "%MRV1_ROOT%\diag\zombie_state.json" del /f /q "%MRV1_ROOT%\diag\zombie_state.json"
+if exist "%MRV1_ROOT%\cmd" rmdir /s /q "%MRV1_ROOT%\cmd"
 
 :: ---- Cargadores FTP / DB que sigan instalados
 set HAY_EXTRAS=

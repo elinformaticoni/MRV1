@@ -24,6 +24,13 @@ foreach ($d in @($Root, $cfgDir, $binDir, $logDir, (Join-Path $logDir 'cargados'
     if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 }
 
+# [v1.13.2] cmd\: solicitudes que la consola web (usuario normal, solo lectura) le deja al monitor, por ejemplo
+# «Buscar y actualizar ahora» (cmd\update.request). Los usuarios pueden crear archivos aqui y nada mas: el monitor
+# (SYSTEM) solo atiende nombres fijos y la actualizacion sigue exigiendo firma valida.
+$cmdDir = Join-Path $Root 'cmd'
+if (-not (Test-Path -LiteralPath $cmdDir)) { New-Item -ItemType Directory -Path $cmdDir -Force | Out-Null }
+try { & icacls.exe $cmdDir /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null } catch { Write-Host ('Aviso: no se pudo dar permiso de solicitudes en {0} ({1}).' -f $cmdDir, $_.Exception.Message) -ForegroundColor Yellow }
+
 $monitorCfgPath = Join-Path $cfgDir 'monitor.json'
 $existing = $null
 if (Test-Path -LiteralPath $monitorCfgPath) {
@@ -158,7 +165,7 @@ $cfgObj = [ordered]@{
 ($cfgObj | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $monitorCfgPath -Encoding utf8 -Force
 
 $verPath = Join-Path $cfgDir 'version.json'
-([ordered]@{ schemaVersion = 1; version = '1.13.1' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
+([ordered]@{ schemaVersion = 1; version = '1.13.3' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
 
 # ---- Parada ordenada (y, si hace falta, forzada) de una instancia previa, antes de copiar los
 # scripts nuevos. Todo el bloque va en try/catch: un fallo aqui (por ejemplo, el proceso no responde)

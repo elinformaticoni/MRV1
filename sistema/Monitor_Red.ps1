@@ -78,6 +78,45 @@ function Start-ZombieSync {
     } catch { Write-DiagLog ('No se pudo lanzar Actualizar_Script.ps1: ' + $_.Exception.Message) }
 }
 
+# [v1.13.2] Solicitud de actualizacion desde la consola web: la consola (que corre con el usuario
+# normal y solo lee) deja un archivo vacio en cmd\update.request; el monitor (SYSTEM, el unico con
+# permiso para reemplazar scripts) lo ve, lo borra y lanza Actualizar_Script.ps1 -Force. El contenido
+# del archivo se ignora y la actualizacion sigue exigiendo firma valida, asi que pedirla no da
+# ningun poder extra. Se mira cada 5 s como maximo (una comprobacion de existencia).
+$script:UpdateRequestFile = Join-Path $Root 'cmd\update.request'
+$script:LastUpdateReqMs = -100000
+function Test-UpdateRequest([long]$nowMs) {
+    try {
+        if (($nowMs - $script:LastUpdateReqMs) -lt 5000) { return }
+        $script:LastUpdateReqMs = $nowMs
+        # [v1.13.3] cmd\db.request: «Enviar datos ahora» (carga a la API). Se corre la tarea programada
+        # "MRV1 DB" (igual que su horario normal; una sola instancia a la vez) o, si no existe, el script directo.
+        $dbReq = Join-Path $script:Root 'cmd\db.request'
+        if (Test-Path -LiteralPath $dbReq) {
+            Remove-Item -LiteralPath $dbReq -Force -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath (Join-Path $script:Root 'config\db_api.json'))) {
+                Write-DiagLog 'Se pidio enviar datos a la API desde la consola, pero esta PC no tiene la API habilitada.'
+            } else {
+                $dbTask = Get-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue
+                $dbScript = Join-Path $script:Root 'bin\Cargador_DB.ps1'
+                if ($dbTask) { Start-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue; Write-DiagLog 'Envio a la API solicitado desde la consola: se inicio la tarea MRV1 DB.' }
+                elseif (Test-Path -LiteralPath $dbScript) {
+                    $exeDb = (Get-Command powershell.exe).Source
+                    Start-Process -FilePath $exeDb -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $dbScript), '-Root', ('"{0}"' -f $script:Root)) -WindowStyle Hidden | Out-Null
+                    Write-DiagLog 'Envio a la API solicitado desde la consola: se ejecuto Cargador_DB.ps1.'
+                } else { Write-DiagLog 'Se pidio enviar datos a la API, pero falta bin\Cargador_DB.ps1.' }
+            }
+        }
+        if (-not (Test-Path -LiteralPath $script:UpdateRequestFile)) { return }
+        Remove-Item -LiteralPath $script:UpdateRequestFile -Force -ErrorAction SilentlyContinue
+        $upd = Join-Path $script:Root 'bin\Actualizar_Script.ps1'
+        if (-not (Test-Path -LiteralPath $upd)) { Write-DiagLog 'Se pidio actualizar desde la consola, pero falta bin\Actualizar_Script.ps1.'; return }
+        $exe = (Get-Command powershell.exe).Source
+        Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $upd), '-Root', ('"{0}"' -f $script:Root), '-Force') -WindowStyle Hidden | Out-Null
+        Write-DiagLog 'Actualizacion solicitada desde la consola: se busca una version nueva ahora.'
+    } catch { Write-DiagLog ('No se pudo atender la solicitud de actualizacion: ' + $_.Exception.Message) }
+}
+
 # ---------------------------------------------------------------------------------------------
 # Utilidades de texto y de nombres
 # ---------------------------------------------------------------------------------------------
@@ -811,6 +850,7 @@ public static class MRShutdown {
 
             if (($nowMs - $lastNetMs) -ge ($netSec * 1000)) { $lastNetMs = $nowMs; Test-NetworkChanges }
             if (($nowMs - $lastUserMs) -ge 30000)           { $lastUserMs = $nowMs; Test-UserChange }
+            Test-UpdateRequest $nowMs
 
             Invoke-Queue
 

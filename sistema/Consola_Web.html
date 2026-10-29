@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf" content="__CSRF__">
 <title>Monitor de Red</title>
 <style>
 :root{
@@ -76,6 +77,12 @@ select,.nav{border:1px solid var(--borde);background:var(--panel);color:var(--te
 .tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--borde);border-radius:9px;box-shadow:var(--sombra);padding:6px 9px;font-size:12px;white-space:nowrap;z-index:3;display:none}
 .vacio{color:var(--tenue);padding:26px 8px;text-align:center}
 .nota{color:var(--tenue);font-size:12px;margin-top:4px}
+.acc{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.btn{border:1px solid var(--acento);background:transparent;color:var(--acento);border-radius:9px;padding:6px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.btn:hover:not([disabled]){background:var(--acento);color:#fff}
+.btn[disabled]{opacity:.55;cursor:default}
+.btn:focus-visible{outline:2px solid var(--acento);outline-offset:2px}
+.acc .res{font-size:13px}.acc .res.ok{color:var(--ok)}.acc .res.err{color:var(--err)}.acc .res.warn{color:var(--warn)}
 .cargas{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
 .carga-t{font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
 .carga p{margin:3px 0;color:var(--suave);font-size:13px;overflow-wrap:anywhere}
@@ -462,7 +469,7 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     if (info.config === 'none') { badge('NO CONFIGURADO', 'off'); c.insertBefore(cab, c.firstChild); p('No está configurada (ejecute ' + bat + ' para habilitarla).'); return c; }
     if (info.config === 'incomplete') { badge('CONFIGURACIÓN INCOMPLETA', 'warn'); c.insertBefore(cab, c.firstChild); p('Tiene datos faltantes (ejecute ' + bat + ' para completarla).', 'w'); return c; }
     var st = info.status;
-    if (!st) { badge('SIN EJECUTAR', 'warn'); c.insertBefore(cab, c.firstChild); p('Configurada; aún no hay cargas registradas (espere la tarea programada \'' + tarea + '\').'); return c; }
+    if (!st) { badge('SIN EJECUTAR', 'warn'); c.insertBefore(cab, c.firstChild); p('Configurada; aún no hay cargas registradas (espere la tarea programada \'' + tarea + '\').'); if (kind === 'DB') c.appendChild(accionDb()); return c; }
     var ult = fechaHora(st.timestamp, ahora), hace = diffSeg(st.timestamp, ahoraStr);
     var prox = st.nextRun, dn = prox ? diffSeg(ahoraStr, prox) : null, atras = dn !== null && dn < 0 && (-dn) / 60 > 15;
     var proxTxt = '--';
@@ -481,12 +488,81 @@ td.m{overflow-wrap:anywhere;min-width:220px}
       p('Vuelva a ejecutar ' + bat + ' para corregir la configuración.', 'w');
     }
     if (atras) p('La tarea programada \'' + tarea + '\' no ha corrido cuando tocaba; verifique que exista y esté habilitada.', 'w');
+    if (kind === 'DB') c.appendChild(accionDb());
     return c;
+  }
+
+  // Boton "Enviar datos ahora" (carga a la API): misma mecanica que "Buscar y actualizar ahora"; el monitor
+  // atiende cmd\db.request iniciando la tarea "MRV1 DB". La pagina espera a que cambie la hora de db_status.json.
+  function seguirDb() {
+    var a = S.dbReq; if (!a || a.fase !== 'esperando') return;
+    var st = S.estado && S.estado.db && S.estado.db.status;
+    if (st && st.timestamp && st.timestamp !== a.base) {
+      S.dbReq = st.ok
+        ? { fase: 'listo', cls: 'ok', msg: 'Datos enviados: ' + (+st.insertadas || 0) + ' filas nuevas, ' + (+st.actualizadas || 0) + ' actualizadas.' }
+        : { fase: 'listo', cls: 'err', msg: 'No se pudo enviar: ' + (st.lastError ? String(st.lastError) : 'revise diag\\db_worker.log') };
+    } else if (Date.now() - a.t0 > 180000) S.dbReq = { fase: 'error', msg: 'El monitor no respondió. Si es anterior a la 1.13.3 no atiende esta solicitud: reinstale con el paquete nuevo.' };
+  }
+  function enviarDatosAhora() {
+    if (S.dbReq && (S.dbReq.fase === 'pidiendo' || S.dbReq.fase === 'esperando')) return;
+    var st0 = S.estado && S.estado.db && S.estado.db.status;
+    S.dbReq = { fase: 'pidiendo' }; pintarCargas();
+    var meta = document.querySelector('meta[name=csrf]'), tok = meta ? meta.getAttribute('content') : '';
+    fetch('/api/subir-datos', { method: 'POST', headers: { 'X-MRV1-Csrf': tok } }).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: 'Respuesta no válida del servidor local.' }; });
+    }).then(function (j) {
+      S.dbReq = j.ok ? { fase: 'esperando', t0: Date.now(), base: st0 ? st0.timestamp : null } : { fase: 'error', msg: j.error || 'No se pudo solicitar el envío.' };
+      pintarCargas();
+    }, function () { S.dbReq = { fase: 'error', msg: 'No se pudo contactar con la consola local.' }; pintarCargas(); });
+  }
+  function accionDb() {
+    var d = el('div', 'acc'), a = S.dbReq || { fase: 'reposo' }, ocupado = a.fase === 'pidiendo' || a.fase === 'esperando';
+    var b = el('button', 'btn', ocupado ? 'Enviando…' : 'Enviar datos ahora');
+    b.type = 'button'; b.disabled = ocupado; b.onclick = enviarDatosAhora;
+    b.title = 'Pide al monitor que envíe ahora los registros pendientes a la API de análisis';
+    d.appendChild(b);
+    if (ocupado) d.appendChild(el('span', 'res', a.fase === 'pidiendo' ? 'Enviando solicitud…' : 'Solicitado; esperando al monitor…'));
+    else if (a.msg) d.appendChild(el('span', 'res ' + (a.cls || 'err'), a.msg));
+    return d;
   }
   // Actualizacion automatica de scripts: status.update lo publica el monitor leyendo diag\update_state.json.
   var UPD_TXT = { actualizada: ['ACTUALIZADA', 'ok'], al_dia: ['AL DÍA', 'ok'], revertida: ['REVERTIDA', 'err'], error: ['ERROR', 'err'],
     firma_invalida: ['FIRMA INVÁLIDA', 'err'], manifiesto_invalido: ['MANIFIESTO INVÁLIDO', 'err'], sin_clave: ['SIN CLAVE', 'warn'] };
   function updFalla(u) { return !!u && (u.result === 'revertida' || u.result === 'error' || u.result === 'firma_invalida' || u.result === 'manifiesto_invalido'); }
+  // Boton "Buscar y actualizar ahora": la pagina pide al servidor local que deje una solicitud para el monitor
+  // (cmd\update.request); el monitor lanza el actualizador y esta pagina espera a que cambie la "ultima consulta".
+  var RES_UPD = { actualizada: ['Actualizada. El monitor se reinicia con la versión nueva.', 'ok'], al_dia: ['Ya tiene la última versión.', 'ok'],
+    revertida: ['La versión nueva no arrancó y se restauró la anterior.', 'err'], error: ['No se pudo actualizar (revise diag\\update.log).', 'err'],
+    firma_invalida: ['Se rechazó la actualización: la firma no es válida.', 'err'], manifiesto_invalido: ['Se rechazó la actualización: el paquete no es válido.', 'err'],
+    sin_clave: ['Esta PC no tiene la clave de actualización: reinstale con el paquete nuevo.', 'warn'] };
+  function seguirActualizacion() {
+    var a = S.upd; if (!a || a.fase !== 'esperando') return;
+    var st = S.estado && S.estado.status, u = st && st.update;
+    if (u && u.lastCheck && u.lastCheck !== a.base) { var r = RES_UPD[u.result] || [String(u.result), 'warn']; S.upd = { fase: 'listo', msg: r[0], cls: r[1] }; }
+    else if (Date.now() - a.t0 > 120000) S.upd = { fase: 'error', msg: 'El monitor no respondió. Si es anterior a la 1.13.2 no atiende esta solicitud: reinstale con el paquete nuevo.' };
+  }
+  function actualizarAhora() {
+    if (S.upd && (S.upd.fase === 'pidiendo' || S.upd.fase === 'esperando')) return;
+    var u0 = S.estado && S.estado.status && S.estado.status.update;
+    S.upd = { fase: 'pidiendo' }; pintarCargas();
+    var meta = document.querySelector('meta[name=csrf]'), tok = meta ? meta.getAttribute('content') : '';
+    fetch('/api/actualizar-ahora', { method: 'POST', headers: { 'X-MRV1-Csrf': tok } }).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: 'Respuesta no válida del servidor local.' }; });
+    }).then(function (j) {
+      S.upd = j.ok ? { fase: 'esperando', t0: Date.now(), base: u0 ? u0.lastCheck : null } : { fase: 'error', msg: j.error || 'No se pudo solicitar la actualización.' };
+      pintarCargas();
+    }, function () { S.upd = { fase: 'error', msg: 'No se pudo contactar con la consola local.' }; pintarCargas(); });
+  }
+  function accionActualizar() {
+    var d = el('div', 'acc'), a = S.upd || { fase: 'reposo' }, ocupado = a.fase === 'pidiendo' || a.fase === 'esperando';
+    var b = el('button', 'btn', ocupado ? 'Buscando…' : 'Buscar y actualizar ahora');
+    b.type = 'button'; b.disabled = ocupado; b.onclick = actualizarAhora;
+    b.title = 'Pide al monitor que busque una versión nueva y la instale si está firmada';
+    d.appendChild(b);
+    if (ocupado) d.appendChild(el('span', 'res', a.fase === 'pidiendo' ? 'Enviando solicitud…' : 'Solicitado; esperando al monitor…'));
+    else if (a.msg) d.appendChild(el('span', 'res ' + (a.cls || 'err'), a.msg));
+    return d;
+  }
   function cargaUpd(est) {
     var st = est.status, u = st && st.update, ahora = parseLocal(est.ahora) || { fecha: '', seg: 0 };
     var c = el('div', 'card carga'), cab = el('div', 'carga-t');
@@ -497,6 +573,7 @@ td.m{overflow-wrap:anywhere;min-width:220px}
       cab.appendChild(el('span', 'badge off', 'SIN DATOS')); c.appendChild(cab);
       p('Versión instalada: ' + ver);
       p('Esta PC todavía no ha consultado actualizaciones (requiere la API habilitada y el actualizador de la versión 1.12 o superior).');
+      c.appendChild(accionActualizar());
       return c;
     }
     var tx = UPD_TXT[u.result] || [String(u.result || '--').toUpperCase(), 'warn'];
@@ -506,9 +583,11 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     p('Última consulta: ' + fechaHora(u.lastCheck, ahora) + (hace !== null ? ' (hace ' + dur(hace) + ')' : ''));
     if (u.detail) p(u.detail, updFalla(u) ? 'e' : (u.result === 'sin_clave' ? 'w' : ''));
     if (updFalla(u)) p('Revise diag\\update.log en esta PC.', 'w');
+    c.appendChild(accionActualizar());
     return c;
   }
   function pintarCargas() {
+    seguirActualizacion(); seguirDb();
     var e = S.estado, cont = $('cargas'); cont.textContent = '';
     cont.appendChild(cargaTarjeta('FTP', e.ftp, e.ahora));
     cont.appendChild(cargaTarjeta('DB', e.db, e.ahora));

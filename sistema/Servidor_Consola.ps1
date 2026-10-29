@@ -149,8 +149,8 @@ function Send-Bytes($ctx, [int]$code, [string]$type, [byte[]]$bytes, [hashtable]
     if ($extra) { foreach ($k in $extra.Keys) { $res.Headers[$k] = [string]$extra[$k] } }
     if ($code -ne 304) {
         $res.ContentLength64 = $bytes.Length
-        # En HEAD (o cualquier metodo no GET) se responde solo con cabeceras.
-        if (($bytes.Length -gt 0) -and ($ctx.Request.HttpMethod -eq 'GET')) { $res.OutputStream.Write($bytes, 0, $bytes.Length) }
+        # En HEAD se responde solo con cabeceras.
+        if (($bytes.Length -gt 0) -and ($ctx.Request.HttpMethod -ne 'HEAD')) { $res.OutputStream.Write($bytes, 0, $bytes.Length) }
     }
 }
 function Send-Json($ctx, [string]$json, [hashtable]$extra) { Send-Bytes $ctx 200 'application/json; charset=utf-8' $utf8.GetBytes($json) $extra }
@@ -227,17 +227,58 @@ function Get-DiaJson([string]$fecha) {
     return $entry
 }
 
+# Token de esta ejecucion del servidor: solo lo recibe la pagina que el propio servidor entrega (otra
+# pagina web no puede leerlo), y es obligatorio para la unica accion que no es de lectura.
+$rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::new()
+$tokBytes = New-Object byte[] 16
+$rng.GetBytes($tokBytes)
+$rng.Dispose()
+$script:CsrfToken = ([System.BitConverter]::ToString($tokBytes) -replace '-', '').ToLowerInvariant()
+$script:LastCmdRequest = @{}
+$updateReqDir  = Join-Path $Root 'cmd'
+
+# [v1.13.2] Pide al monitor que busque e instale una actualizacion ahora. La consola no actualiza nada por
+# su cuenta (corre con el usuario normal y es de solo lectura): solo deja el archivo cmd\update.request,
+# que el monitor (SYSTEM) atiende lanzando Actualizar_Script.ps1 -Force. Solo se instalan versiones firmadas.
+function Invoke-CmdRequest($ctx, [int]$port, [string]$nombre, [string]$etiqueta) {
+    $req = $ctx.Request
+    $origin = [string]$req.Headers['Origin']
+    if ($origin -and ($origin -ne ('http://localhost:{0}' -f $port))) { Send-Json2 $ctx 403 '{"ok":false,"error":"Origen no permitido."}'; return }
+    if ([string]$req.Headers['X-MRV1-Csrf'] -ne $script:CsrfToken) { Send-Json2 $ctx 403 '{"ok":false,"error":"Solicitud no valida (recargue la pagina)."}'; return }
+    if ($script:LastCmdRequest.ContainsKey($nombre) -and (((Get-Date) - $script:LastCmdRequest[$nombre]).TotalSeconds -lt 10)) { Send-Json2 $ctx 429 '{"ok":false,"error":"Espere unos segundos antes de volver a pedirlo."}'; return }
+    if (-not (Test-Path -LiteralPath $updateReqDir -PathType Container)) {
+        Send-Json2 $ctx 409 '{"ok":false,"codigo":"sin_carpeta","error":"Esta instalacion no tiene la carpeta cmd\\ (monitor anterior a 1.13.2): reinstale con el paquete nuevo."}'
+        return
+    }
+    try {
+        [System.IO.File]::WriteAllText((Join-Path $updateReqDir $nombre), (Get-Date).ToString('s'), $utf8)
+    } catch {
+        Write-ServerLog ('No se pudo crear cmd\' + $nombre + ': ' + $_.Exception.Message)
+        Send-Json2 $ctx 403 '{"ok":false,"codigo":"sin_permiso","error":"Este usuario no puede pedirle la actualizacion al monitor (reinstale con el paquete 1.13.2 o ejecute Actualizar_Script.ps1 como administrador)."}'
+        return
+    }
+    $script:LastCmdRequest[$nombre] = Get-Date
+    Write-ServerLog ('Se solicito al monitor: ' + $etiqueta)
+    Send-Json2 $ctx 200 ('{"ok":true,"solicitadoEn":' + (ConvertTo-JsonString (Get-Date).ToString('s')) + '}')
+}
+
+function Send-Json2($ctx, [int]$code, [string]$json) { Send-Bytes $ctx $code 'application/json; charset=utf-8' $utf8.GetBytes($json) $null }
+
 function Invoke-Request($ctx, [int]$port) {
     $req = $ctx.Request
-    # Solo se atiende a quien llega por localhost / 127.0.0.1 (defensa contra DNS rebinding) y solo lectura (GET).
+    # Solo se atiende a quien llega por localhost / 127.0.0.1 (defensa contra DNS rebinding). Todo es de lectura (GET)
+    # salvo POST /api/actualizar-ahora y /api/subir-datos, que exigen el token de esta ejecucion y deja solo una solicitud al monitor.
     $hostHdr = [string]$req.Headers['Host']
     if ($hostHdr -notmatch '^(localhost|127\.0\.0\.1)(:\d+)?$') { Send-Text $ctx 403 'Acceso denegado.'; return }
+    if (($req.HttpMethod -eq 'POST') -and ($req.Url.AbsolutePath -eq '/api/actualizar-ahora')) { Invoke-CmdRequest $ctx $port 'update.request' 'buscar actualizaciones'; return }
+    if (($req.HttpMethod -eq 'POST') -and ($req.Url.AbsolutePath -eq '/api/subir-datos')) { Invoke-CmdRequest $ctx $port 'db.request' 'enviar los datos a la API'; return }
     if ($req.HttpMethod -ne 'GET') { Send-Text $ctx 405 'Solo lectura.'; return }
     $path = $req.Url.AbsolutePath
     switch ($path) {
         '/' {
             if (-not (Test-Path -LiteralPath $htmlFile)) { Send-Text $ctx 500 'Falta Consola_Web.html junto a Servidor_Consola.ps1.'; return }
-            Send-Bytes $ctx 200 'text/html; charset=utf-8' ([System.IO.File]::ReadAllBytes($htmlFile)) $null
+            $html = [System.IO.File]::ReadAllText($htmlFile, [System.Text.Encoding]::UTF8).Replace('__CSRF__', $script:CsrfToken)
+            Send-Bytes $ctx 200 'text/html; charset=utf-8' ($utf8.GetBytes($html)) $null
         }
         '/api/ping'   { Send-Json $ctx ('{"app":"mrv1-consola","root":' + (ConvertTo-JsonString $Root) + ',"port":' + $port + '}') $null }
         '/api/estado' { Send-Json $ctx (Get-EstadoJson) $null }
