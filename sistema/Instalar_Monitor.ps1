@@ -165,7 +165,7 @@ $cfgObj = [ordered]@{
 ($cfgObj | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $monitorCfgPath -Encoding utf8 -Force
 
 $verPath = Join-Path $cfgDir 'version.json'
-([ordered]@{ schemaVersion = 1; version = '1.13.4' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
+([ordered]@{ schemaVersion = 1; version = '1.13.5' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
 
 # ---- Parada ordenada (y, si hace falta, forzada) de una instancia previa, antes de copiar los
 # scripts nuevos. Todo el bloque va en try/catch: un fallo aqui (por ejemplo, el proceso no responde)
@@ -201,6 +201,14 @@ try {
 } finally {
     Remove-Item -LiteralPath $stopFlag -Force -ErrorAction SilentlyContinue
 }
+
+# ---- [v1.13.5] Cerrar las consolas web abiertas: corren la version anterior del servidor y, mientras haya una
+# pestana abierta, nunca se cierran solas. La proxima vez que se abra la consola arranca la version nueva.
+try {
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match 'Servidor_Consola\.ps1' } |
+        ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
+} catch { }
 
 # ---- Copiar scripts (bin\)
 $src = Split-Path -Parent $MyInvocation.MyCommand.Path

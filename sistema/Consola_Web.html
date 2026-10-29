@@ -508,12 +508,12 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     var st0 = S.estado && S.estado.db && S.estado.db.status;
     S.dbReq = { fase: 'pidiendo' }; pintarCargas();
     var meta = document.querySelector('meta[name=csrf]'), tok = meta ? meta.getAttribute('content') : '';
-    fetch('/api/subir-datos', { method: 'POST', headers: { 'X-MRV1-Csrf': tok } }).then(function (r) {
+    postConTiempo('/api/subir-datos', tok).then(function (r) {
       return r.json().catch(function () { return { ok: false, error: 'Respuesta no válida del servidor local.' }; });
     }).then(function (j) {
       S.dbReq = j.ok ? { fase: 'esperando', t0: Date.now(), base: st0 ? st0.timestamp : null } : { fase: 'error', msg: j.error || 'No se pudo solicitar el envío.' };
       pintarCargas();
-    }, function () { S.dbReq = { fase: 'error', msg: 'No se pudo contactar con la consola local.' }; pintarCargas(); });
+    }, function () { S.dbReq = { fase: 'error', msg: 'No se pudo contactar con la consola local. Si acaba de actualizar, cierre esta pestaña y abra la consola de nuevo.' }; pintarCargas(); });
   }
   function accionDb() {
     var d = el('div', 'acc'), a = S.dbReq || { fase: 'reposo' }, ocupado = a.fase === 'pidiendo' || a.fase === 'esperando';
@@ -535,6 +535,12 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     revertida: ['La versión nueva no arrancó y se restauró la anterior.', 'err'], error: ['No se pudo actualizar (revise diag\\update.log).', 'err'],
     firma_invalida: ['Se rechazó la actualización: la firma no es válida.', 'err'], manifiesto_invalido: ['Se rechazó la actualización: el paquete no es válido.', 'err'],
     sin_clave: ['Esta PC no tiene la clave de actualización: reinstale con el paquete nuevo.', 'warn'] };
+  // POST con limite de tiempo: si el servidor local es de una version anterior y no contesta, no se queda en «Enviando solicitud…».
+  function postConTiempo(url, tok) {
+    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 10000);
+    return fetch(url, { method: 'POST', headers: { 'X-MRV1-Csrf': tok }, signal: ac.signal }).then(function (r) { clearTimeout(t); return r; },
+      function (e) { clearTimeout(t); throw e; });
+  }
   function seguirActualizacion() {
     var a = S.upd; if (!a || a.fase !== 'esperando') return;
     var st = S.estado && S.estado.status, u = st && st.update;
@@ -546,12 +552,12 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     var u0 = S.estado && S.estado.status && S.estado.status.update;
     S.upd = { fase: 'pidiendo' }; pintarCargas();
     var meta = document.querySelector('meta[name=csrf]'), tok = meta ? meta.getAttribute('content') : '';
-    fetch('/api/actualizar-ahora', { method: 'POST', headers: { 'X-MRV1-Csrf': tok } }).then(function (r) {
+    postConTiempo('/api/actualizar-ahora', tok).then(function (r) {
       return r.json().catch(function () { return { ok: false, error: 'Respuesta no válida del servidor local.' }; });
     }).then(function (j) {
       S.upd = j.ok ? { fase: 'esperando', t0: Date.now(), base: u0 ? u0.lastCheck : null } : { fase: 'error', msg: j.error || 'No se pudo solicitar la actualización.' };
       pintarCargas();
-    }, function () { S.upd = { fase: 'error', msg: 'No se pudo contactar con la consola local.' }; pintarCargas(); });
+    }, function () { S.upd = { fase: 'error', msg: 'No se pudo contactar con la consola local. Si acaba de actualizar, cierre esta pestaña y abra la consola de nuevo.' }; pintarCargas(); });
   }
   function accionActualizar() {
     var d = el('div', 'acc'), a = S.upd || { fase: 'reposo' }, ocupado = a.fase === 'pidiendo' || a.fase === 'esperando';

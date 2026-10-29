@@ -317,6 +317,17 @@ try {
         throw
     }
 
+    # --- Si cambio el servidor de la consola web, se cierran los que estan corriendo (con una pestana abierta
+    # nunca se cerrarian solos): la proxima apertura de la consola arranca la version nueva.
+    if (@($aplicados | Where-Object { $_.Name -eq 'Servidor_Consola.ps1' }).Count -gt 0) {
+        try {
+            Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -match 'Servidor_Consola\.ps1' } |
+                ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
+            Write-Log 'Se cerro la consola web en ejecucion para que use el servidor nuevo.'
+        } catch { }
+    }
+
     # --- Reinicio del monitor y comprobacion; si no vuelve, rollback
     $sano = $true
     if ($monitorCambio) {

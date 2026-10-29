@@ -498,6 +498,8 @@ Interfaz visual que se puede abrir en cualquier momento. **No hace ping** y no g
 
 **Botón «Enviar datos ahora» [1.13.3].** En la tarjeta de la carga a la API (solo si está configurada). Misma mecánica: `POST /api/subir-datos` deja `cmd\db.request` y el monitor inicia la tarea programada `MRV1 DB` (o ejecuta `Cargador_DB.ps1` si la tarea no existe), de modo que sigue habiendo una sola instancia a la vez. La página espera a que cambie la hora de `db_status.json` y muestra «Datos enviados: N filas nuevas, M actualizadas» o el error. Sin la API habilitada el monitor lo registra en `diag\monitor.log` y no hace nada.
 
+**Reemplazo de servidores viejos [1.13.5].** Mientras hay una pestaña abierta el servidor recibe consultas cada segundo y nunca se cierra solo, así que antes una actualización o reinstalación dejaba a la página nueva hablando con un servidor viejo (por ejemplo, el botón se quedaba en «Enviando solicitud…»). Ahora `/api/ping` informa un identificador de la versión del script (`build`); al abrir la consola, si el servidor en marcha de esta instalación tiene otro `build` (o ninguno), se cierra y arranca el nuevo. Además `Instalar_Monitor.ps1` cierra las consolas web abiertas antes de copiar los scripts y `Actualizar_Script.ps1` hace lo mismo si cambió `Servidor_Consola.ps1`. Los botones tienen un límite de 10 s de espera para no quedarse colgados.
+
 La consola muestra:
 
 **Arriba (resumen)**
@@ -694,7 +696,7 @@ Cada PC detecta sola una versión nueva publicada en el servidor y la instala, s
 
 **Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día) y al terminar cada corrida de `Cargador_DB.ps1`; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
 
-**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.4**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
+**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.5**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
 
 **Seguimiento [1.13.1].** El resultado de cada consulta queda en `diag\update_state.json`; `Monitor_Red.ps1` lo publica en `status.json` (campo `update`: `result`, `lastCheck`, `remote`, `detail`, releído cada 20 s) y la consola web lo muestra en la tarjeta «Actualización de scripts», con una alerta si la última fue `revertida`, `error`, `firma_invalida` o `manifiesto_invalido`. Además `Actualizar_Script.ps1` informa al servidor la versión instalada y cada fallo (ver `backend/IA.md` 5.2), y `index.php` muestra esa versión junto al nombre de cada máquina.
 

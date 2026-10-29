@@ -235,6 +235,10 @@ $rng.GetBytes($tokBytes)
 $rng.Dispose()
 $script:CsrfToken = ([System.BitConverter]::ToString($tokBytes) -replace '-', '').ToLowerInvariant()
 $script:LastCmdRequest = @{}
+# Identificador de la version de ESTE script: otra consola que arranque con un script distinto reemplaza a este servidor.
+$sha = [System.Security.Cryptography.SHA256]::Create()
+$script:Build = (([System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($PSCommandPath))) -replace '-', '').Substring(0, 12)).ToLowerInvariant()
+$sha.Dispose()
 $updateReqDir  = Join-Path $Root 'cmd'
 
 # [v1.13.2] Pide al monitor que busque e instale una actualizacion ahora. La consola no actualiza nada por
@@ -280,7 +284,7 @@ function Invoke-Request($ctx, [int]$port) {
             $html = [System.IO.File]::ReadAllText($htmlFile, [System.Text.Encoding]::UTF8).Replace('__CSRF__', $script:CsrfToken)
             Send-Bytes $ctx 200 'text/html; charset=utf-8' ($utf8.GetBytes($html)) $null
         }
-        '/api/ping'   { Send-Json $ctx ('{"app":"mrv1-consola","root":' + (ConvertTo-JsonString $Root) + ',"port":' + $port + '}') $null }
+        '/api/ping'   { Send-Json $ctx ('{"app":"mrv1-consola","root":' + (ConvertTo-JsonString $Root) + ',"port":' + $port + ',"build":' + (ConvertTo-JsonString $script:Build) + '}') $null }
         '/api/estado' { Send-Json $ctx (Get-EstadoJson) $null }
         '/api/dias'   { Send-Json $ctx (Get-DiasJson) $null }
         '/api/dia' {
@@ -314,16 +318,34 @@ function Find-Running {
                 $sr = New-Object System.IO.StreamReader($rs.GetResponseStream(), [System.Text.Encoding]::UTF8)
                 $o = $sr.ReadToEnd() | ConvertFrom-Json
             } finally { $rs.Close() }
-            if (($o.app -eq 'mrv1-consola') -and ([string]$o.root -ieq $Root)) { return $p }
+            if (($o.app -eq 'mrv1-consola') -and ([string]$o.root -ieq $Root)) { $script:RunningBuild = [string]$o.build; return $p }
         } catch { }
     }
     return 0
 }
 
+# Cierra los servidores de consola de ESTA instalacion que siguen corriendo con una version anterior del script
+# (mientras haya una pestana abierta consultan cada segundo y nunca llegan a cerrarse solos, asi que una
+# actualizacion o reinstalacion no los reemplazaba y la pagina nueva hablaba con un servidor viejo).
+function Stop-OldServers {
+    try {
+        $rx = [regex]::Escape($Root)
+        Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+            Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'Servidor_Consola\.ps1' -and $_.CommandLine -match $rx } |
+            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-ServerLog ('Se cerro un servidor de consola anterior (PID {0}).' -f $_.ProcessId) } catch { } }
+    } catch { Write-ServerLog ('No se pudo cerrar el servidor anterior: ' + $_.Exception.Message) }
+}
+
+$script:RunningBuild = ''
 $running = Find-Running
 if ($running -gt 0) {
-    Open-Browser ('http://localhost:{0}/' -f $running)
-    return
+    if ($script:RunningBuild -eq $script:Build) {
+        Open-Browser ('http://localhost:{0}/' -f $running)
+        return
+    }
+    # Hay un servidor de otra version (o anterior a 1.13.5, que no informa su version): se reemplaza.
+    Stop-OldServers
+    for ($w = 0; ($w -lt 10) -and ((Find-Running) -gt 0); $w++) { Start-Sleep -Milliseconds 500 }
 }
 
 $listener = $null
