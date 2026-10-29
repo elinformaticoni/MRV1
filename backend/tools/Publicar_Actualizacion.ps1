@@ -102,6 +102,12 @@ foreach ($a in $archivos) {
         $err = $null; $tok = $null
         [System.Management.Automation.Language.Parser]::ParseFile($src, [ref]$tok, [ref]$err) | Out-Null
         if ($err -and $err.Count) { throw ('Error de sintaxis en {0} (linea {1}): {2}' -f $a.n, $err[0].Extent.StartLineNumber, $err[0].Message) }
+        # Windows PowerShell 5.1 lee como ANSI un .ps1 sin BOM: los acentos saldrian rotos (ConfiguraciÃ³n) en CSV y logs.
+        $raw = [System.IO.File]::ReadAllBytes($src)
+        $tieneBom = ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF)
+        if ((-not $tieneBom) -and ($raw | Where-Object { $_ -gt 127 } | Select-Object -First 1)) {
+            throw ('{0} tiene caracteres no ASCII pero no esta guardado como UTF-8 con BOM; los acentos se verian mal. Guardelo con BOM.' -f $a.n)
+        }
     }
     $lista += @{ n = $a.n; d = $a.d; src = $src }
 }

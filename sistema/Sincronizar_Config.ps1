@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Monitor de Red (MR) - Sincronizar_Config.ps1  [v1.11]
 .DESCRIPTION

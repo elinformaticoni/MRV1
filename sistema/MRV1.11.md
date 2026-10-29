@@ -694,7 +694,7 @@ Cada PC detecta sola una versión nueva publicada en el servidor y la instala, s
 
 **Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día) y al terminar cada corrida de `Cargador_DB.ps1`; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
 
-**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.3**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
+**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.4**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
 
 **Seguimiento [1.13.1].** El resultado de cada consulta queda en `diag\update_state.json`; `Monitor_Red.ps1` lo publica en `status.json` (campo `update`: `result`, `lastCheck`, `remote`, `detail`, releído cada 20 s) y la consola web lo muestra en la tarjeta «Actualización de scripts», con una alerta si la última fue `revertida`, `error`, `firma_invalida` o `manifiesto_invalido`. Además `Actualizar_Script.ps1` informa al servidor la versión instalada y cada fallo (ver `backend/IA.md` 5.2), y `index.php` muestra esa versión junto al nombre de cada máquina.
 
@@ -840,7 +840,7 @@ MRV1\                         Raíz del paquete / repositorio (solo lo que usa u
 
 Notas:
 
-- Los `.ps1` y `.bat` están en CRLF (final de línea de Windows) y los `.ps1` se leen como UTF-8 con BOM; guardar cualquier edición manteniendo esa codificación.
+- Los `.ps1` y `.bat` están en CRLF (final de línea de Windows) y los `.ps1` se leen como UTF-8 con BOM; guardar cualquier edición manteniendo esa codificación (un `.ps1` con acentos y sin BOM se lee como ANSI en Windows PowerShell 5.1 y los textos salen rotos, p. ej. «ConfiguraciÃ³n»; `Publicar_Actualizacion.ps1` lo rechaza).
 - Cada `Instalar_*.bat` invoca a su asistente `.ps1` correspondiente (mismo nombre, misma carpeta; excepción: `Instalar_Monitor.bat` de la raíz lo busca en `sistema\`) con `powershell -NoProfile -ExecutionPolicy Bypass -File`, así que cada par `.ps1`/`.bat` debe copiarse junto con los cinco scripts del sistema (`Monitor_Red.ps1`, `Monitor_Red_Console.ps1`, `Cargador_FTP.ps1`, `Cargador_DB.ps1`, `Sincronizar_Config.ps1`), que `Instalar_Monitor.ps1` copia solo a `bin\`.
 
 ### Lista de pruebas sugerida
