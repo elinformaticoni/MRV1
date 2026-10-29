@@ -33,6 +33,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$esPrueba = [bool]$OutDir   # PowerShell no distingue mayusculas: $outDir (abajo) pisa a $OutDir, por eso se guarda antes
 $repo    = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $sistema = Join-Path $repo 'sistema'
 $outDir  = if ($OutDir) { $OutDir } else { Join-Path $repo 'update' }
@@ -180,7 +181,7 @@ Write-Host ''
 Write-Host ('Version {0}: manifiesto de {1} archivos generado desde el commit {2} y firmado (firma verificada).' -f $Version, $files.Count, $commit.Substring(0, 7)) -ForegroundColor Green
 
 # ---- Etiquetar y subir (solo con la carpeta de salida normal; con -OutDir es una prueba)
-if ($OutDir) { Write-Host ('Prueba: salida en {0}; no se etiqueta ni se sube nada.' -f $outDir); return }
+if ($esPrueba) { Write-Host ('Prueba: salida en {0}; no se etiqueta ni se sube nada.' -f $outDir); return }
 if (-not $Publicar) {
     $r = Read-Host ("Crear la etiqueta {0} y subirla a GitHub AHORA (las PC la aplicaran en su proximo ciclo)? [S/N]" -f $tag)
     if ($r -notmatch '^[sS]') {
