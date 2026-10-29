@@ -110,3 +110,52 @@ function mr_leer_cuerpo_json(): array
     }
     return $datos;
 }
+
+/**
+ * Versión de los scripts publicada actualmente (api/update/manifest.json), o null si no hay.
+ */
+function mr_version_publicada(): ?string
+{
+    static $v = false;
+    if ($v === false) {
+        $v = null;
+        $ruta = __DIR__ . '/../update/manifest.json';
+        $m = is_file($ruta) ? json_decode((string) @file_get_contents($ruta), true) : null;
+        if (is_array($m) && is_string($m['version'] ?? null) && preg_match('/^\d+(\.\d+){1,3}$/', $m['version'])) {
+            $v = $m['version'];
+        }
+    }
+    return $v;
+}
+
+/**
+ * Versión de scripts que informó una PC (api/update/pcs/<pc>.json, lo escribe
+ * actualizar.php?accion=confirmar). Devuelve null si la PC nunca informó.
+ *   estado: 'ok' al día · 'vieja' hay una versión publicada más nueva · 'falla' el último intento falló
+ */
+function mr_version_pc(string $pc): ?array
+{
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/', $pc) || str_contains($pc, '..')) {
+        return null;
+    }
+    $ruta = __DIR__ . '/../update/pcs/' . strtolower($pc) . '.json';
+    $d = is_file($ruta) ? json_decode((string) @file_get_contents($ruta), true) : null;
+    if (!is_array($d) || !is_string($d['version'] ?? null) || !preg_match('/^\d+(\.\d+){1,3}$/', $d['version'])) {
+        return null;
+    }
+    $estado = 'ok';
+    $pub = mr_version_publicada();
+    if (($d['ok'] ?? true) === false) {
+        $estado = 'falla';
+    } elseif ($pub !== null && version_compare($d['version'], $pub, '<')) {
+        $estado = 'vieja';
+    }
+    return [
+        'v'         => $d['version'],
+        'estado'    => $estado,
+        'resultado' => (string) ($d['resultado'] ?? ''),
+        'detalle'   => (string) ($d['detalle'] ?? ''),
+        'en'        => (string) ($d['en'] ?? ''),
+        'publicada' => $pub,
+    ];
+}

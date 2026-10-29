@@ -492,6 +492,8 @@ Interfaz visual que se puede abrir en cualquier momento. **No hace ping** y no g
 
 **Cerrar la consola no detiene el monitor.** El monitor sigue con `PING → CSV → status.json`; la consola no controla su vida.
 
+**[v1.12] Consola web (por defecto).** `Abrir_Consola.bat` abre la consola en el navegador: `Servidor_Consola.ps1` levanta un servidor HTTP **solo en esta PC** (`http://localhost:8765/`, o el siguiente puerto libre hasta 8774), de solo lectura y sin permisos de administrador, que entrega a `Consola_Web.html` (SPA, sin librerías externas) lo mismo que lee la consola de texto: `status.json`, los CSV del día elegido, `ftp_status.json` y `db_status.json`. Muestra una tarjeta por destino (estado, latencia, promedio del día, disponibilidad, OK/ERROR, caídas), un **gráfico de líneas de latencia por destino** (*En vivo*: un punto por ping mientras la página está abierta, con ventana de 5 min a 3 h; *Día completo*: promedio por tramo con conexión, que es lo que guarda el CSV; las bandas rojas son tramos sin conexión), las cargas al servidor, y los cambios del día con filtro por tipo y selector de fecha para días anteriores. Se adapta al ancho de la pantalla y la lista de cambios tiene su propio desplazamiento (la página no se desborda). Si ya hay una consola web de esta instalación abierta, solo abre el navegador en ella; el servidor se cierra solo tras 10 minutos sin consultas y registra en `diag\consola_web.log`. Solo atiende `GET` desde `localhost`. `Abrir_Consola.bat texto` abre la consola de texto de siempre (`Monitor_Red_Console.ps1`, rediseñada en la 1.12: una tabla de una fila por destino y la pantalla armada a la medida de la ventana, sin desbordes). Sin `Servidor_Consola.ps1`/`Consola_Web.html` en `bin\` se usa la de texto.
+
 La consola muestra:
 
 **Arriba (resumen)**
@@ -525,7 +527,7 @@ CARGAS AL SERVIDOR
 ```
 
 **Abajo (historial)**
-- **todos los cambios de estado del día que estén disponibles** (sin tope), del más reciente al más antiguo, con el destino indicado (unificados si hay varios). El buffer de la consola se agranda al abrir (hasta ~3000 líneas) para que un día con muchas caídas no rompa el redibujado; si la lista no cabe en la ventana visible, se recorre con la barra de desplazamiento.
+- **los cambios del día** del más reciente al más antiguo, con el destino indicado (unificados si hay varios). Desde la rediseñada de la consola, la pantalla se arma a medida del tamaño real de la ventana (por defecto 118×38, buffer igual a la ventana, sin barra de desplazamiento): los destinos van en **una tabla de una fila por destino** (en ventanas angostas se omiten columnas opcionales), y se muestran tantos cambios como quepan; el título de la sección indica cuántos hay en total (el resto está en `logs\`). Cada línea se recorta con «…» al ancho de la ventana y nunca se usa la última fila, para que no haya desbordes ni desplazamientos.
 
 **Colores:** verde = OK, rojo = ERROR, amarillo = EVENTO, cian = INICIO, gris = INCOMPLETO.
 
@@ -668,6 +670,33 @@ Al aplicar:
 
 **Pendiente (recordatorio):** optimizar cuándo se descarga la configuración (hoy: en cada `INICIO` y al terminar la carga a la API; ver también `backend/IA.md` sección 9).
 
+### 10.7 Actualización automática de scripts (`Actualizar_Script.ps1`) [v1.12]
+
+Cada PC detecta sola una versión nueva publicada en el servidor y la instala, sin reinstalar con `Instalar_Monitor.bat`. Componente independiente y de mejor esfuerzo (P3): un fallo aquí nunca afecta al monitor ni a las cargas. Detalle del servidor: `backend/IA.md` sección 5.2.
+
+**Publicar (desarrollador).** `backend\tools\Publicar_Actualizacion.ps1` comprueba la sintaxis de todos los `.ps1`, copia los archivos a `backend\api\update\paquete\`, genera `manifest.json` (versión + SHA-256 y tamaño de cada archivo) y lo **firma con RSA-SHA256** (`manifest.sig`). Se sube esa carpeta al servidor junto con `actualizar.php`.
+- **Primera vez:** `Publicar_Actualizacion.ps1 -NuevaClave` crea el par de claves. La **privada** queda en `%USERPROFILE%\.mrv1\update_private.xml` (haga respaldo; nunca va al repositorio ni al servidor) y la **pública** en `sistema\update_pubkey.xml`, que viaja con el paquete.
+- **Cada mejora:** subir el número de versión en `Instalar_Monitor.ps1` (`version = '…'`, es la fuente única) y ejecutar `Publicar_Actualizacion.ps1`.
+- La clave pública la copia `Instalar_Monitor.ps1` a `config\update_pubkey.xml` y **ninguna actualización la reemplaza**: un servidor comprometido no puede mandar código a las PC porque no tiene la clave privada. Sin esa clave en la PC, la actualización automática queda deshabilitada.
+- Si se pierde la clave privada hay que generar un par nuevo y reinstalar a mano las PC (la clave pública instalada no cambia sola).
+
+**Flujo en la PC.**
+1. Lee `config\db_api.json` (misma URL y token que la API; deriva `actualizar.php`). Sin API habilitada no se actualiza sola. Solo acepta **HTTPS** (o `localhost` para pruebas).
+2. Descarga el manifiesto y la firma y **verifica la firma**; si no es válida lo ignora y lo registra.
+3. Si la versión publicada es mayor que la de `config\version.json`, descarga **solo los archivos cuyo SHA-256 cambió**, comprueba tamaño y hash, y comprueba que cada `.ps1` compila. Solo acepta nombres de una lista fija de extensiones (`.ps1`, `.html`, `.bat`) y destinos `bin\` o la raíz de `C:\ProgramData\MRV1`.
+4. Guarda copia de lo que reemplaza en `diag\update_backup\<versión anterior>\` y reemplaza los archivos (el propio `Actualizar_Script.ps1` al final).
+5. Si cambió `Monitor_Red.ps1`, reinicia el monitor con parada ordenada y comprueba que vuelve a escribir `status.json`; **si no arranca, restaura la copia, lo reinicia y deja el resultado `revertida`** (esa versión no se reintenta hasta que se publique otra mayor o se use `-Force`).
+6. Escribe `config\version.json`, informa al servidor (`POST actualizar.php?accion=confirmar`) y guarda el resultado en `diag\update_state.json` y `diag\update.log`.
+
+**Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día) y al terminar cada corrida de `Cargador_DB.ps1`; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
+
+**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.1**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
+
+**Seguimiento [1.13.1].** El resultado de cada consulta queda en `diag\update_state.json`; `Monitor_Red.ps1` lo publica en `status.json` (campo `update`: `result`, `lastCheck`, `remote`, `detail`, releído cada 20 s) y la consola web lo muestra en la tarjeta «Actualización de scripts», con una alerta si la última fue `revertida`, `error`, `firma_invalida` o `manifiesto_invalido`. Además `Actualizar_Script.ps1` informa al servidor la versión instalada y cada fallo (ver `backend/IA.md` 5.2), y `index.php` muestra esa versión junto al nombre de cada máquina.
+
+**Primera vez en las PC:** las PC con una versión anterior a 1.12 no tienen el actualizador ni la clave pública, así que la actualización a 1.12 es la **última reinstalación manual** (`Instalar_Monitor.bat` con el paquete que trae `update_pubkey.xml`). A partir de ahí, las mejoras se publican con `Publicar_Actualizacion.ps1`.
+
+**Pendiente:** probar el reinicio y el rollback del monitor en una PC real (las pruebas se hicieron contra un servidor simulado, sin la tarea `MRV1 Monitor`) y mostrar la versión de cada PC en una página del servidor (hoy: `GET actualizar.php?accion=versiones`).
 ---
 
 ## 11. Manejo de errores
@@ -798,6 +827,8 @@ MRV1\                         Raíz del paquete / repositorio (solo lo que usa u
     sistema\                   Todo lo demás
         MRV1.11.md             Esta guía
         Monitor_Red.ps1, Monitor_Red_Console.ps1, Cargador_FTP.ps1, Cargador_DB.ps1, Sincronizar_Config.ps1 [v1.11]
+        Servidor_Consola.ps1, Consola_Web.html, Actualizar_Script.ps1, update_pubkey.xml [v1.12]
+        (backend\tools\Publicar_Actualizacion.ps1 y backend\api\actualizar.php, update\: solo desarrollador/servidor)
         Instalar_Monitor.ps1, Instalar_FTP.ps1 / .bat, Instalar_DB.ps1 / .bat
         Desinstalar_FTP.bat, Desinstalar_DB.bat
         config\ftp.json, config\db_api.json (referencia; los asistentes no los leen)
@@ -818,4 +849,6 @@ Notas:
 6. **API de análisis**: ejecutar `Instalar_DB.bat` presionando solo Enter en cada pregunta. Confirmar que el instalador muestra «ENVÍO A LA API CORRECTO» con filas insertadas, y que las filas aparecen en la base de datos. Repetir la corrida y confirmar que no se duplican (deduplicación por upsert). Abrir `https://mrv1.solucionesnicaragua.com/`, elegir la semana y confirmar que la PC aparece en la lista de máquinas y que el gráfico y la descarga HTML funcionan.
 7. **Archivo bloqueado**: abrir un CSV activo en Excel mientras el monitor sigue corriendo; provocar un cambio de estado y confirmar que, al cerrar Excel, la fila pendiente se completa sin perder datos.
 8. **Desinstalación**: ejecutar `Desinstalar_Monitor.bat`, `Desinstalar_FTP.bat` y `Desinstalar_DB.bat`; confirmar que las tareas desaparecen, que `logs\` y `logs\cargados\` permanecen intactos, y que desaparecen el acceso directo del escritorio y las copias de los BAT en `C:\ProgramData\MRV1`.
-9. **Configuración remota**: con la API habilitada, crear una instrucción en `zombie.php` para esta PC cambiando un destino y la frecuencia del FTP. Confirmar que, en la siguiente corrida de `Cargador_DB.ps1` (o forzando `Sincronizar_Config.ps1 -Root C:\ProgramData\MRV1`), el monitor se reinicia con el destino nuevo, la tarea `MRV1 FTP` queda con la frecuencia nueva, aparece el `EVENTO` de aplicación en el CSV, `zombie.php` muestra la revisión como «Aplicada» y la consola la muestra en el encabezado. Repetir la corrida y confirmar que no vuelve a reiniciar el monitor (misma revisión).
+9. **Consola web [v1.12]**: ejecutar `Abrir_Consola.bat`; se abre el navegador en `http://localhost:8765/`. Verificar tarjetas por destino, el gráfico *En vivo* (se llena mientras la página está abierta), *Día completo*, el selector de fecha y el filtro de cambios. Ejecutar `Abrir_Consola.bat` otra vez: solo debe abrir otra pestaña, sin segundo servidor. Cerrar las pestañas y confirmar que a los ~10 min el proceso `Servidor_Consola.ps1` termina. `Abrir_Consola.bat texto` debe abrir la consola de texto sin desbordes en una ventana pequeña.
+10. **Actualización automática [v1.12]**: con `Publicar_Actualizacion.ps1 -NuevaClave` ya ejecutado y la carpeta `update\` + `actualizar.php` en el servidor, instalar 1.12 en una PC, publicar una versión mayor y ejecutar `Actualizar_Script.ps1 -Root C:\ProgramData\MRV1 -Force`. Confirmar en `diag\update.log` «Actualización aplicada», que `config\version.json` y la consola muestran la versión nueva, que `config\*.json` no cambió y que el monitor se reinició solo (nuevo `INICIO`). Alterar a mano un archivo del servidor (sin republicar) y confirmar que se rechaza por SHA-256, y alterar `manifest.json` y confirmar «FIRMA INVALIDA». Publicar una versión cuyo `Monitor_Red.ps1` no arranque (con la sintaxis correcta pero un error en tiempo de ejecución) y confirmar el resultado `revertida` y que el monitor sigue funcionando con la versión anterior.
+11. **Configuración remota**: con la API habilitada, crear una instrucción en `zombie.php` para esta PC cambiando un destino y la frecuencia del FTP. Confirmar que, en la siguiente corrida de `Cargador_DB.ps1` (o forzando `Sincronizar_Config.ps1 -Root C:\ProgramData\MRV1`), el monitor se reinicia con el destino nuevo, la tarea `MRV1 FTP` queda con la frecuencia nueva, aparece el `EVENTO` de aplicación en el CSV, `zombie.php` muestra la revisión como «Aplicada» y la consola la muestra en el encabezado. Repetir la corrida y confirmar que no vuelve a reiniciar el monitor (misma revisión).

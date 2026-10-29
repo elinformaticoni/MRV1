@@ -158,7 +158,7 @@ $cfgObj = [ordered]@{
 ($cfgObj | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $monitorCfgPath -Encoding utf8 -Force
 
 $verPath = Join-Path $cfgDir 'version.json'
-([ordered]@{ schemaVersion = 1; version = '1.11' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
+([ordered]@{ schemaVersion = 1; version = '1.13.1' } | ConvertTo-Json) | Out-File -LiteralPath $verPath -Encoding utf8 -Force
 
 # ---- Parada ordenada (y, si hace falta, forzada) de una instancia previa, antes de copiar los
 # scripts nuevos. Todo el bloque va en try/catch: un fallo aqui (por ejemplo, el proceso no responde)
@@ -226,6 +226,18 @@ function Copy-FromSource([string]$name, [string]$dest, [switch]$Required) {
 foreach ($f in @('Monitor_Red.ps1', 'Monitor_Red_Console.ps1', 'Cargador_FTP.ps1', 'Cargador_DB.ps1', 'Sincronizar_Config.ps1')) {
     Copy-FromSource $f (Join-Path $binDir $f) -Required
 }
+# [v1.12] Consola web (servidor local de solo lectura + pagina). Si faltan, Abrir_Consola.bat usa la consola de texto.
+foreach ($f in @('Servidor_Consola.ps1', 'Consola_Web.html', 'Actualizar_Script.ps1')) {
+    Copy-FromSource $f (Join-Path $binDir $f) -Required
+}
+# [v1.12] Clave PUBLICA con la que Actualizar_Script.ps1 verifica la firma de las actualizaciones. Va a config\
+# (las actualizaciones automaticas nunca la reemplazan). Sin ella la actualizacion automatica queda deshabilitada.
+$pubSrc = Find-SourceFile 'update_pubkey.xml'
+if ($pubSrc) {
+    Copy-Item -LiteralPath $pubSrc -Destination (Join-Path $cfgDir 'update_pubkey.xml') -Force
+} elseif (-not (Test-Path -LiteralPath (Join-Path $cfgDir 'update_pubkey.xml'))) {
+    Write-Host 'Aviso: el paquete no trae update_pubkey.xml; la actualizacion automatica quedara deshabilitada en esta PC.' -ForegroundColor Yellow
+}
 
 # ---- Copiar tambien los BAT de desinstalacion y el lanzador de la consola a la raiz de $Root,
 # para que quede todo lo necesario dentro de C:\ProgramData\MRV1 aunque se borre despues el
@@ -272,7 +284,11 @@ Write-Host ''
 # instalar/configurar el FTP a continuacion.
 Write-Host 'Abriendo la consola de monitoreo...' -ForegroundColor Cyan
 $consoleScript = Join-Path $binDir 'Monitor_Red_Console.ps1'
-if (Test-Path -LiteralPath $consoleScript) {
+$webScript = Join-Path $binDir 'Servidor_Consola.ps1'
+if (Test-Path -LiteralPath $webScript) {
+    # [v1.12] Consola web: servidor local oculto + navegador.
+    Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $webScript), '-Root', ('"{0}"' -f $Root)) -WindowStyle Hidden
+} elseif (Test-Path -LiteralPath $consoleScript) {
     Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $consoleScript), '-Root', ('"{0}"' -f $Root)) -WindowStyle Normal
 } else {
     Write-Host 'No se encontró Monitor_Red_Console.ps1 en bin\.' -ForegroundColor Yellow

@@ -39,6 +39,8 @@ $script:LastActive = $null
 $script:VersionText = 'MR V1'
 $script:ShutdownOk = $false
 $script:ZombieStateFile = Join-Path $Root 'diag\zombie_state.json'   # [v1.11] config remota
+$script:UpdateStateFile = Join-Path $Root 'diag\update_state.json'   # [v1.13.1] actualizacion automatica (la escribe Actualizar_Script.ps1)
+$script:UpdInfo = $null; $script:UpdInfoAt = [datetime]::MinValue
 
 # ---------------------------------------------------------------------------------------------
 # Log tecnico (diag\monitor.log, con rotacion por tamano)
@@ -66,6 +68,14 @@ function Start-ZombieSync {
         $exe = (Get-Command powershell.exe).Source
         Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $script), '-Root', ('"{0}"' -f $script:Root)) -WindowStyle Hidden | Out-Null
     } catch { Write-DiagLog ('No se pudo lanzar Sincronizar_Config.ps1: ' + $_.Exception.Message) }
+    # [v1.12] Actualizacion automatica de los scripts (Actualizar_Script.ps1): mismo disparo, mismo principio de mejor esfuerzo.
+    try {
+        $upd = Join-Path $script:Root 'bin\Actualizar_Script.ps1'
+        if (Test-Path -LiteralPath $upd) {
+            $exe2 = (Get-Command powershell.exe).Source
+            Start-Process -FilePath $exe2 -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $upd), '-Root', ('"{0}"' -f $script:Root)) -WindowStyle Hidden | Out-Null
+        }
+    } catch { Write-DiagLog ('No se pudo lanzar Actualizar_Script.ps1: ' + $_.Exception.Message) }
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -435,6 +445,24 @@ function Write-Status([bool]$running) {
             }
         } catch { }
 
+        # [v1.13.1] Estado de la actualizacion automatica (diag\update_state.json). Se relee cada 20 s
+        # como maximo; mejor esfuerzo: sin archivo (PC sin actualizador) queda en $null.
+        try {
+            if (((Get-Date) - $script:UpdInfoAt).TotalSeconds -ge 20) {
+                $script:UpdInfoAt = Get-Date
+                $script:UpdInfo = $null
+                if (Test-Path -LiteralPath $script:UpdateStateFile) {
+                    $us = [System.IO.File]::ReadAllText($script:UpdateStateFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                    $script:UpdInfo = [ordered]@{
+                        result      = [string]$us.resultado
+                        lastCheck   = [string]$us.ultimaConsulta
+                        remote      = [string]$us.versionRemota
+                        detail      = [string]$us.detalle
+                    }
+                }
+            }
+        } catch { }
+
         $obj = [ordered]@{
             schemaVersion    = 1
             version          = $script:VersionText
@@ -447,6 +475,7 @@ function Write-Status([bool]$running) {
             timestamp        = (Get-Date).ToString('s')
             configRevision   = $configRevision
             configAppliedAt  = $configAppliedAt
+            update           = $script:UpdInfo
             targets          = @($tl)
         }
         $json = $obj | ConvertTo-Json -Depth 6

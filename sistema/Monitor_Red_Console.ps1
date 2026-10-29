@@ -233,9 +233,42 @@ function Get-TypeColor($type, $incomplete) {
     }
 }
 
-function Build-Screen {
+function Parse-Iso($s) {
+    if ($s -is [datetime]) { return $s }
+    if ([string]::IsNullOrWhiteSpace([string]$s)) { return $null }
+    try { return [datetime]::ParseExact([string]$s, 's', [System.Globalization.CultureInfo]::InvariantCulture) } catch { return $null }
+}
+
+# Ajusta un texto a exactamente $n caracteres: lo recorta con "…" si sobra y lo rellena si falta.
+function Fit([string]$s, [int]$n, [bool]$right = $false) {
+    if ($n -le 0) { return '' }
+    if ($null -eq $s) { $s = '' }
+    if ($s.Length -gt $n) {
+        if ($n -gt 1) { $s = $s.Substring(0, $n - 1) + '…' } else { $s = $s.Substring(0, $n) }
+    }
+    if ($right) { return $s.PadLeft($n) }
+    return $s.PadRight($n)
+}
+
+# Titulo de seccion con una regla fina que llena el ancho: "── TITULO  detalle ─────────"
+function New-Rule([string]$title, [int]$w, [string]$extra = '') {
+    $h = [string][char]0x2500
+    $left = ('{0}{0} ' -f $h)
+    $mid = $title
+    if ($extra) { $mid += ('  ' + $extra) }
+    $fill = $w - 1 - $left.Length - $mid.Length - 1
+    if ($fill -lt 2) { $fill = 2 }
+    $segs = @((New-Seg $left 'DarkGray'), (New-Seg $title 'White'))
+    if ($extra) { $segs += (New-Seg ('  ' + $extra) 'DarkGray') }
+    $segs += (New-Seg (' ' + ($h * $fill)) 'DarkGray')
+    return ,$segs
+}
+
+# $W x $H = tamano actual de la ventana: la pantalla se arma para caber SIEMPRE (nada de desbordes).
+function Build-Screen([int]$W, [int]$H) {
     $lines = New-Object System.Collections.ArrayList
     $now = Get-Date
+    $sep = [string][char]0x00B7
 
     $stText = Read-Shared $statusFile
     $st = $null
@@ -245,17 +278,17 @@ function Build-Screen {
         [void]$lines.Add(@((New-Seg 'MONITOR DE RED' 'White')))
         [void]$lines.Add(@((New-Seg '' 'Gray')))
         [void]$lines.Add(@((New-Seg 'Esperando datos del monitor (status.json no disponible)...' 'Yellow')))
-        [void]$lines.Add(@((New-Seg 'Si el monitor no esta instalado, ejecute Instalar_Monitor.bat.' 'Gray')))
+        [void]$lines.Add(@((New-Seg 'Si el monitor no está instalado, ejecute Instalar_Monitor.bat.' 'Gray')))
         return $lines
     }
 
-    $ts = $now
-    try { $ts = [datetime]::ParseExact([string]$st.timestamp, 's', [System.Globalization.CultureInfo]::InvariantCulture) } catch { }
+    $ts = Parse-Iso $st.timestamp
+    if ($null -eq $ts) { $ts = $now }
     $age = ($now - $ts).TotalSeconds
     $stale = ($age -gt $staleSec)
     $stopped = ($st.running -eq $false)
 
-    # ---- Encabezado
+    # ---- Encabezado: 3 lineas fijas
     # [v1.9] Alias de la PC: de status.json; si el monitor en marcha es anterior y no lo trae, de config\monitor.json.
     $alias = [string]$st.alias
     if ([string]::IsNullOrWhiteSpace($alias)) {
@@ -271,24 +304,33 @@ function Build-Screen {
     if ($ad -and $ad.name -and ($ad.ip)) {
         $adText = ('{0} ({1}{2}) {3}' -f $ad.name, $ad.type, $(if ($ad.ssid) { ' ' + $ad.ssid } else { '' }), $ad.ip)
     }
-    $hdr = @((New-Seg ('MONITOR DE RED  ' + $st.version) 'White'))
-    if (-not [string]::IsNullOrWhiteSpace($alias)) { $hdr += (New-Seg '   ·   ' 'DarkGray'); $hdr += (New-Seg $alias.ToUpper() 'Cyan') }
-    $hdr += (New-Seg ('     Actualizado ' + $ts.ToString('HH:mm:ss')) 'DarkGray')
+    $title = 'MONITOR DE RED'
+    if ($st.version) { $title += ('  ' + $st.version) }
+    $aliasTxt = ''
+    if (-not [string]::IsNullOrWhiteSpace($alias)) { $aliasTxt = ('   {0}   {1}' -f $sep, $alias.ToUpper()) }
+    $right = 'Actualizado ' + $ts.ToString('HH:mm:ss')
+    $pad = $W - 1 - $title.Length - $aliasTxt.Length - $right.Length
+    if ($pad -lt 2) { $pad = 2 }
+    $hdr = @((New-Seg $title 'White'))
+    if ($aliasTxt) { $hdr += (New-Seg $aliasTxt 'Cyan') }
+    $hdr += (New-Seg ((' ' * $pad) + $right) 'DarkGray')
     [void]$lines.Add($hdr)
-    [void]$lines.Add(@((New-Seg ('COMPUTADORA: {0}   USUARIO: {1}' -f $st.computer, $st.user) 'Gray')))
-    [void]$lines.Add(@((New-Seg ('ADAPTADOR: ' + $adText) 'Gray')))
-    # [v1.11] Revision de configuracion remota ("zombie") aplicada, si Sincronizar_Config.ps1 ya
-    # aplico alguna (ver MRV1.10.md 10.6). Sin instruccion aplicada, no se muestra esta linea.
+
+    [void]$lines.Add(@((New-Seg ('{0} {1} {2} {1} {3}' -f $st.computer, $sep, $st.user, $adText) 'Gray')))
+
+    $sess = Parse-Iso $st.sessionStart
+    if ($null -eq $sess) { $sess = $now }
+    $l3 = @((New-Seg ('Sesión desde {0}  ({1} activo)' -f $sess.ToString('yyyy-MM-dd HH:mm:ss'), (Format-Dur (($now - $sess).TotalSeconds))) 'DarkGray'))
+    # [v1.11] Revision de configuracion remota ("zombie") aplicada, si Sincronizar_Config.ps1 ya aplico alguna.
     if ($st.configRevision) {
-        $aplicadaTxt = [string]$st.configRevision
-        if ($st.configAppliedAt) {
-            try { $aplicadaTxt += ' (aplicada ' + ([datetime]::ParseExact([string]$st.configAppliedAt, 's', [System.Globalization.CultureInfo]::InvariantCulture)).ToString('yyyy-MM-dd HH:mm:ss') + ')' } catch { }
-        }
-        [void]$lines.Add(@((New-Seg 'CONFIGURACIÓN REMOTA: rev. ' 'Gray'), (New-Seg $aplicadaTxt 'DarkCyan')))
+        $rev = [string]$st.configRevision
+        $ap = Parse-Iso $st.configAppliedAt
+        if ($ap) { $rev += (' (aplicada ' + $ap.ToString('yyyy-MM-dd HH:mm') + ')') }
+        $l3 += (New-Seg ('   {0}   Config. remota rev. ' -f $sep) 'DarkGray')
+        $l3 += (New-Seg $rev 'DarkCyan')
     }
-    $sess = $now
-    try { $sess = [datetime]::ParseExact([string]$st.sessionStart, 's', [System.Globalization.CultureInfo]::InvariantCulture) } catch { }
-    [void]$lines.Add(@((New-Seg ('SESIÓN DESDE: {0}   TIEMPO ACTIVO: {1}' -f $sess.ToString('yyyy-MM-dd HH:mm:ss'), (Format-Dur (($now - $sess).TotalSeconds))) 'Gray')))
+    [void]$lines.Add($l3)
+
     if ($stopped) {
         [void]$lines.Add(@((New-Seg '*** MONITOR DETENIDO ***' 'Red')))
     } elseif ($stale) {
@@ -296,12 +338,11 @@ function Build-Screen {
     }
     [void]$lines.Add(@((New-Seg '' 'Gray')))
 
-    # ---- Por destino
+    # ---- Destinos: UNA fila por destino (tabla). Se calculan los totales del dia desde el CSV.
     $all = New-Object System.Collections.ArrayList
-    $n = 0
-    $targets = @($st.targets)
-    foreach ($t in $targets) {
-        $n++
+    $rowsT = New-Object System.Collections.ArrayList
+    $intervals = @{}
+    foreach ($t in @($st.targets)) {
         $file = Join-Path $logDir ('{0} {1} {2}.csv' -f $st.computer, (Get-SafeName ([string]$t.address)), $now.ToString('yyyy-MM-dd'))
         $rows = Get-Rows $file
 
@@ -322,34 +363,91 @@ function Build-Screen {
         $color = 'Yellow'
         if ($status -eq 'OK') { $color = 'Green' } elseif ($status -eq 'ERROR') { $color = 'Red' }
         if ($stale -or $stopped) { $color = 'DarkGray' }
-        $since = ''
-        if ($t.stateSince) { $since = ' desde ' + ([datetime]::ParseExact([string]$t.stateSince, 's', [System.Globalization.CultureInfo]::InvariantCulture)).ToString('HH:mm:ss') + ' (' + (Format-Dur $t.stateDuration) + ')' }
-        [void]$lines.Add(@((New-Seg ('DESTINO {0}: {1}   ' -f $n, $t.address) 'White'), (New-Seg ('ESTADO: ' + $status) $color), (New-Seg $since 'Gray')))
-
+        $since = Parse-Iso $t.stateSince
+        $resp = Parse-Iso $t.lastResponse
+        $tot = $okSec + $errSec
+        $disp = '--'; if ($tot -gt 0) { $disp = ('{0:0.0}%' -f (100.0 * $okSec / $tot)) }
         $latNow = '--'; if ($null -ne $t.latency) { $latNow = ('{0} ms' -f $t.latency) }
         $latAvg = '--'; if ($latS -gt 0) { $latAvg = ('{0} ms' -f [int][math]::Round($latW / $latS)) }
-        $lastResp = '--'
-        if ($t.lastResponse) { $lastResp = ([datetime]::ParseExact([string]$t.lastResponse, 's', [System.Globalization.CultureInfo]::InvariantCulture)).ToString('HH:mm:ss') }
-        [void]$lines.Add(@((New-Seg ('  Latencia: {0} (prom. del día: {1})   Última respuesta: {2}   Intervalo: {3} s' -f $latNow, $latAvg, $lastResp, $t.intervalSec) 'Gray')))
-        $tot = $okSec + $errSec
-        $pct = ''
-        if ($tot -gt 0) { $pct = (' ({0:0.0}% disponible)' -f (100.0 * $okSec / $tot)) }
-        [void]$lines.Add(@((New-Seg '  Hoy: ' 'Gray'), (New-Seg ('OK ' + (Format-Dur $okSec)) 'Green'), (New-Seg '  ' 'Gray'), (New-Seg ('ERROR ' + (Format-Dur $errSec)) 'Red'), (New-Seg ('   Caídas: {0}{1}' -f $errCount, $pct) 'Gray')))
-        [void]$lines.Add(@((New-Seg '' 'Gray')))
+        if ($t.intervalSec) { $intervals[[string]$t.intervalSec] = $true }
+        [void]$rowsT.Add(@{
+            dest = [string]$t.address; estado = $status; ecol = $color
+            desde = $(if ($since) { $since.ToString('HH:mm:ss') } else { '--' })
+            dur = $(if ($since) { Format-Dur $t.stateDuration } else { '--' })
+            lat = $latNow; prom = $latAvg
+            resp = $(if ($resp) { $resp.ToString('HH:mm:ss') } else { '--' })
+            ok = (Format-Dur $okSec); err = (Format-Dur $errSec); errv = $errSec
+            caidas = [string]$errCount; disp = $disp
+        })
     }
+
+    $extra = ''
+    if ($intervals.Count -eq 1) { $extra = ('ping cada {0} s' -f @($intervals.Keys)[0]) }
+    [void]$lines.Add((New-Rule 'DESTINOS' $W $extra))
+    if ($rowsT.Count -eq 0) {
+        [void]$lines.Add(@((New-Seg '  (sin destinos configurados)' 'DarkGray')))
+    } else {
+        # Columnas por prioridad: en ventanas angostas se omiten las opcionales (Opt = ancho minimo de ventana).
+        $defs = @(
+            @{ K = 'dest';   H = 'DESTINO';   W = 0;  R = $false; Opt = 0 },
+            @{ K = 'estado'; H = 'ESTADO';    W = 7;  R = $false; Opt = 0 },
+            @{ K = 'desde';  H = 'DESDE';     W = 8;  R = $false; Opt = 100 },
+            @{ K = 'dur';    H = 'DURACIÓN';  W = 8;  R = $false; Opt = 0 },
+            @{ K = 'lat';    H = 'LAT.';      W = 7;  R = $true;  Opt = 0 },
+            @{ K = 'prom';   H = 'PROM.';     W = 7;  R = $true;  Opt = 100 },
+            @{ K = 'resp';   H = 'ÚLT.RESP.'; W = 9;  R = $false; Opt = 118 },
+            @{ K = 'ok';     H = 'OK HOY';    W = 8;  R = $false; Opt = 0 },
+            @{ K = 'err';    H = 'ERROR HOY'; W = 9;  R = $false; Opt = 0 },
+            @{ K = 'caidas'; H = 'CAÍD.';     W = 5;  R = $true;  Opt = 0 },
+            @{ K = 'disp';   H = 'DISP.';     W = 6;  R = $true;  Opt = 0 }
+        )
+        $cols = @($defs | Where-Object { $W -ge $_.Opt })
+        $fixed = 2 + (2 * ($cols.Count - 1))
+        foreach ($c in $cols) { $fixed += $c.W }
+        $destW = $W - 1 - $fixed
+        if ($destW -lt 8) { $destW = 8 }
+        if ($destW -gt 30) { $destW = 30 }
+        foreach ($c in $cols) { if ($c.K -eq 'dest') { $c.W = $destW } }
+
+        $hs = @((New-Seg '  ' 'DarkGray'))
+        $first = $true
+        foreach ($c in $cols) {
+            if (-not $first) { $hs += (New-Seg '  ' 'DarkGray') }
+            $first = $false
+            $hs += (New-Seg (Fit $c.H $c.W $c.R) 'DarkGray')
+        }
+        [void]$lines.Add($hs)
+        foreach ($rt in $rowsT) {
+            $rs = @((New-Seg '  ' 'Gray'))
+            $first = $true
+            foreach ($c in $cols) {
+                if (-not $first) { $rs += (New-Seg '  ' 'Gray') }
+                $first = $false
+                $col = 'Gray'
+                switch ($c.K) {
+                    'dest'   { $col = 'White' }
+                    'estado' { $col = $rt.ecol }
+                    'ok'     { $col = 'Green' }
+                    'err'    { if ($rt.errv -gt 0) { $col = 'Red' } else { $col = 'DarkGray' } }
+                    'caidas' { if ($rt.caidas -ne '0') { $col = 'Yellow' } else { $col = 'DarkGray' } }
+                }
+                $rs += (New-Seg (Fit ([string]$rt[$c.K]) $c.W $c.R) $col)
+            }
+            [void]$lines.Add($rs)
+        }
+    }
+    [void]$lines.Add(@((New-Seg '' 'Gray')))
 
     # ---- Cargas al servidor (FTP y API/DB) [MEJORA v1.9]: de un vistazo, para cada cargador,
     # si esta configurado o no, si la ultima carga fue correcta, cuando fue y cuando sera la proxima.
     # La consola no habla con el servidor FTP ni con la API: solo lee config\*.json (para saber si
     # el componente esta configurado) y los *_status.json que escriben Cargador_FTP.ps1 / Cargador_DB.ps1.
-    [void]$lines.Add(@((New-Seg 'CARGAS AL SERVIDOR' 'White')))
+    [void]$lines.Add((New-Rule 'CARGAS AL SERVIDOR' $W))
     foreach ($ln in (Get-LoaderLines 'FTP' $now)) { [void]$lines.Add($ln) }
     foreach ($ln in (Get-LoaderLines 'DB' $now)) { [void]$lines.Add($ln) }
     [void]$lines.Add(@((New-Seg '' 'Gray')))
 
-    # ---- Todos los cambios de hoy (los EVENTO/INICIO repetidos en varios destinos se muestran como "todos")
-    [void]$lines.Add(@((New-Seg 'TODOS LOS CAMBIOS DE HOY' 'White')))
-    [void]$lines.Add(@((New-Seg ('  {0,-9}{1,-23}{2,-8}{3,-11}{4,-9}{5}' -f 'HORA', 'DESTINO', 'TIPO', 'TIEMPO', 'LATENCIA', 'MENSAJE') 'DarkGray')))
+    # ---- Cambios de hoy (los EVENTO/INICIO repetidos en varios destinos se muestran como "todos")
     $groups = @{}
     $entries = New-Object System.Collections.ArrayList
     foreach ($e in $all) {
@@ -365,25 +463,30 @@ function Build-Screen {
         }
     }
     $sorted = @($entries | Sort-Object -Property @{ Expression = { $_.R.When }; Descending = $true }, @{ Expression = { $_.R.Seq }; Descending = $true })
+
+    # La cantidad de cambios mostrados se calcula con el alto REAL de la ventana: escribir mas lineas
+    # de las que caben haria que la consola se desplace sola y rompe el redibujado (ver Draw).
+    # Se reservan: regla + cabecera de columnas + linea en blanco + pie.
+    $avail = $H - 1 - $lines.Count - 4
+    if ($avail -lt 1) { $avail = 1 }
+    $shown = $sorted
+    if ($sorted.Count -gt $avail) { $shown = $sorted[0..($avail - 1)] }
+    $extra = ''
+    if ($sorted.Count -gt $shown.Count) { $extra = ('mostrando los {0} más recientes de {1}  ·  el resto está en logs\' -f $shown.Count, $sorted.Count) }
+    elseif ($sorted.Count -gt 0) { $extra = ('{0} en total' -f $sorted.Count) }
+    [void]$lines.Add((New-Rule 'CAMBIOS DE HOY' $W $extra))
+
+    $dW = 18; if ($W -lt 100) { $dW = 14 }
+    $msgW = $W - 1 - (2 + 8 + 2 + $dW + 2 + 7 + 2 + 10 + 2 + 8 + 2)
+    if ($msgW -lt 10) { $msgW = 10 }
+    [void]$lines.Add(@((New-Seg ('  {0}  {1}  {2}  {3}  {4}  {5}' -f (Fit 'HORA' 8), (Fit 'DESTINO' $dW), (Fit 'TIPO' 7), (Fit 'TIEMPO' 10), (Fit 'LAT.' 8 $true), 'MENSAJE') 'DarkGray')))
     if ($sorted.Count -eq 0) {
         [void]$lines.Add(@((New-Seg '  (sin registros hoy)' 'DarkGray')))
-    }
-    # Tope fijo de eventos mostrados: en un dia con muchos cambios, escribir mas lineas de las que
-    # caben en la ventana hace que la consola (o el emulador de terminal) se desplace sola, y eso
-    # rompe el redibujado en sitio (parece que "MONITOR DE RED" se repite sin parar). Con un maximo
-    # fijo, la pantalla nunca crece mas alla de lo que la ventana puede mostrar de una sola vez.
-    $maxEventos = 50
-    $shown = $sorted
-    $hidden = 0
-    if ($sorted.Count -gt $maxEventos) {
-        $shown = $sorted[0..($maxEventos - 1)]
-        $hidden = $sorted.Count - $shown.Count
     }
     foreach ($e in $shown) {
         $r = $e.R
         $dest = $e.Dest
         if ($e.Count -gt 1) { $dest = 'todos' }
-        if ($dest.Length -gt 22) { $dest = $dest.Substring(0, 22) }
         $dur = ''
         if ($r.Incomplete) { $dur = 'incompleto' }
         elseif ($r.Open) { $dur = 'en curso' }
@@ -392,10 +495,11 @@ function Build-Screen {
         if (($r.Type -eq 'OK') -and (-not $r.Incomplete) -and (-not $r.Open) -and ($null -ne $r.Lat)) { $lat = ('{0} ms' -f $r.Lat) }
         elseif (($r.Type -eq 'EVENTO') -or ($r.Type -eq 'INICIO')) { $lat = '' }
         $col = Get-TypeColor $r.Type $r.Incomplete
-        [void]$lines.Add(@((New-Seg ('  {0}  {1,-22} ' -f $r.When.ToString('HH:mm:ss'), $dest) 'Gray'), (New-Seg ('{0,-7} ' -f $r.Type) $col), (New-Seg ('{0,-10} ' -f $dur) 'Gray'), (New-Seg ('{0,-8} ' -f $lat) 'Gray'), (New-Seg $r.Msg $col)))
-    }
-    if ($hidden -gt 0) {
-        [void]$lines.Add(@((New-Seg ('  ... y {0} cambio(s) más de hoy (se muestran los {1} más recientes; revise el CSV en logs\ para ver el resto)' -f $hidden, $maxEventos) 'DarkGray')))
+        [void]$lines.Add(@(
+            (New-Seg ('  {0}  {1}  ' -f $r.When.ToString('HH:mm:ss'), (Fit $dest $dW)) 'Gray'),
+            (New-Seg ((Fit ([string]$r.Type) 7) + '  ') $col),
+            (New-Seg ('{0}  {1}  ' -f (Fit $dur 10), (Fit $lat 8 $true)) 'Gray'),
+            (New-Seg (Fit ([string]$r.Msg).Trim() $msgW) $col)))
     }
     [void]$lines.Add(@((New-Seg '' 'Gray')))
     [void]$lines.Add(@((New-Seg 'Q = salir   (cerrar esta ventana no detiene el monitor)' 'DarkGray')))
@@ -411,18 +515,30 @@ function Build-Screen {
 # vez de sobrescribirse. Se usa [Console]::Clear() antes de cada dibujado: es mas tosco (puede
 # producir un parpadeo minimo) pero es la unica forma que garantiza, en cualquier terminal, que la
 # pantalla realmente se reinicia antes de escribir el cuadro nuevo.
-function Draw([System.Collections.ArrayList]$lines) {
-    $w = [Console]::WindowWidth - 1
-    if ($w -lt 20) { $w = 20 }
+# Anti-desborde: se escribe como maximo (alto - 1) lineas (la ultima fila nunca se usa, asi el cursor
+# no provoca un desplazamiento) y cada linea se recorta con "…" al ancho de la ventana (sin saltos de linea).
+function Draw([System.Collections.ArrayList]$lines, [int]$w, [int]$h) {
+    $maxW = $w - 1
+    if ($maxW -lt 20) { $maxW = 20 }
+    $maxL = $h - 1
+    if ($maxL -lt 1) { $maxL = 1 }
     try { [Console]::Clear() } catch { }
-    foreach ($ln in $lines) {
+    $n = [math]::Min($lines.Count, $maxL)
+    for ($i = 0; $i -lt $n; $i++) {
         $used = 0
-        foreach ($seg in $ln) {
+        foreach ($seg in $lines[$i]) {
             $txt = $seg.T
-            if (($used + $txt.Length) -gt $w) { $txt = $txt.Substring(0, [math]::Max(0, $w - $used)) }
+            $cut = $false
+            if (($used + $txt.Length) -gt $maxW) {
+                $room = $maxW - $used
+                if ($room -le 0) { break }
+                if ($room -gt 1) { $txt = $txt.Substring(0, $room - 1) + '…' } else { $txt = '…' }
+                $cut = $true
+            }
             [Console]::ForegroundColor = [System.ConsoleColor]$seg.C
             [Console]::Write($txt)
             $used += $txt.Length
+            if ($cut) { break }
         }
         [Console]::ForegroundColor = [System.ConsoleColor]::Gray
         [Console]::WriteLine()
@@ -433,23 +549,30 @@ function Draw([System.Collections.ArrayList]$lines) {
 # Bucle principal
 # ---------------------------------------------------------------------------------------------
 try { $Host.UI.RawUI.WindowTitle = 'Monitor de Red - Consola' } catch { }
-# El buffer se deja del MISMO alto que la ventana (sin historial extra desplazable): con eventos
-# limitados a 50 (ver Build-Screen) esta altura alcanza siempre para mostrar todo de una sola vez.
-$consoleH = 110
+# Ventana de tamano razonable (cabe en una pantalla normal). El buffer se mantiene IGUAL a la
+# ventana (sin barra de desplazamiento): la pantalla se arma a medida del tamano real, y si el
+# usuario redimensiona la ventana se vuelve a ajustar en el siguiente cuadro.
+$consoleW = 118
+$consoleH = 38
 try {
     [Console]::SetWindowSize(80, 25)
-    [Console]::SetBufferSize(118, $consoleH)
-    [Console]::SetWindowSize(118, $consoleH)
+    [Console]::SetBufferSize($consoleW, $consoleH)
+    [Console]::SetWindowSize($consoleW, $consoleH)
 } catch {
-    try { & cmd.exe /c ('mode con: cols=118 lines={0}' -f $consoleH) | Out-Null } catch { }
+    try { & cmd.exe /c ('mode con: cols={0} lines={1}' -f $consoleW, $consoleH) | Out-Null } catch { }
 }
 try {
     [Console]::CursorVisible = $false
     [Console]::Clear()
     while ($true) {
         try {
-            $screen = Build-Screen
-            Draw $screen
+            $W = [Console]::WindowWidth
+            $H = [Console]::WindowHeight
+            try {
+                if (([Console]::BufferWidth -ne $W) -or ([Console]::BufferHeight -ne $H)) { [Console]::SetBufferSize($W, $H) }
+            } catch { }
+            $screen = Build-Screen $W $H
+            Draw $screen $W $H
         } catch {
             try { [Console]::Clear(); [Console]::ForegroundColor = [System.ConsoleColor]::Red; [Console]::WriteLine(('Error al actualizar: ' + $_.Exception.Message).PadRight(100)) } catch { }
         }

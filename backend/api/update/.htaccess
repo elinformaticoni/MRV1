@@ -1,0 +1,3 @@
+# Paquete de actualizacion (manifest.json, manifest.sig, paquete\, pcs\).
+# Nunca se sirve directo: el acceso es solo por actualizar.php con X-MR-Token.
+Require all denied

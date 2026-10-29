@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor de Red</title>
+<style>
+:root{
+  --bg:#f4f6f8; --panel:#ffffff; --texto:#1f2933; --suave:#5f6b7a; --tenue:#8a95a3; --borde:#dde3ea; --grid:#e8edf2;
+  --ok:#16a34a; --ok-bg:rgba(22,163,74,.10); --err:#dc2626; --err-bg:rgba(220,38,38,.10); --warn:#d97706; --warn-bg:rgba(217,119,6,.12);
+  --ev:#2563eb; --ini:#0891b2; --acento:#0f6cbd; --sombra:0 1px 2px rgba(15,23,42,.06),0 4px 14px rgba(15,23,42,.05);
+  --s1:#2563eb; --s2:#ea7a1a; --s3:#7c3aed; --s4:#0d9488; --s5:#db2777;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#11161c; --panel:#1a2129; --texto:#e6ebf0; --suave:#a9b4c0; --tenue:#7b8794; --borde:#2c3642; --grid:#27313c;
+  --ok:#32d583; --ok-bg:rgba(50,213,131,.12); --err:#f87171; --err-bg:rgba(248,113,113,.14); --warn:#fbbf24; --warn-bg:rgba(251,191,36,.14);
+  --ev:#5b8def; --ini:#22d3ee; --acento:#4c9be8; --sombra:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);
+  --s1:#5b8def; --s2:#fb923c; --s3:#a78bfa; --s4:#2dd4bf; --s5:#f472b6;
+}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--texto);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:16px}
+h1,h2,h3{margin:0}
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.top h1{font-size:20px;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pill{font-size:12px;font-weight:600;border:1px solid var(--borde);color:var(--suave);border-radius:999px;padding:1px 9px}
+.alias{color:var(--acento)}
+.sub{color:var(--suave);margin-top:2px;overflow-wrap:anywhere}
+.reloj{text-align:right;color:var(--suave);font-size:12px;display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 var(--ok)}
+.dot.viva{animation:pulso 2s infinite}
+.dot.mala{background:var(--err)}
+@keyframes pulso{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}70%{box-shadow:0 0 0 7px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
+@media (prefers-reduced-motion:reduce){.dot.viva{animation:none}}
+.alertas{display:grid;gap:8px;margin-top:12px}
+.alerta{border:1px solid var(--borde);border-left-width:4px;border-radius:10px;padding:8px 12px;background:var(--panel);font-weight:600}
+.alerta.err{border-color:var(--err);color:var(--err);background:var(--err-bg)}
+.alerta.warn{border-color:var(--warn);color:var(--warn);background:var(--warn-bg)}
+section{margin-top:18px}
+.sec-cab{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.sec-cab h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--suave);font-weight:700}
+.tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--borde);border-radius:14px;padding:14px;box-shadow:var(--sombra);min-width:0}
+.card-cab{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dest{font-weight:700;font-size:15px;overflow-wrap:anywhere;display:flex;align-items:center;gap:8px;min-width:0}
+.sw{width:10px;height:10px;border-radius:3px;flex:none}
+.badge{font-size:12px;font-weight:700;border-radius:999px;padding:2px 10px;border:1px solid transparent;white-space:nowrap}
+.badge.ok{color:var(--ok);background:var(--ok-bg)}
+.badge.err{color:var(--err);background:var(--err-bg)}
+.badge.warn{color:var(--warn);background:var(--warn-bg)}
+.badge.off{color:var(--tenue);background:var(--grid)}
+.lat{display:flex;align-items:baseline;gap:6px;margin:8px 0 6px}
+.lat b{font-size:30px;line-height:1;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.lat span{color:var(--suave)}
+.kv{display:grid;grid-template-columns:1fr auto;gap:3px 12px;font-size:13px}
+.kv dt{color:var(--suave)}.kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kv .ok{color:var(--ok)}.kv .err{color:var(--err)}
+.barra{height:6px;border-radius:99px;background:var(--err-bg);overflow:hidden;margin:8px 0 6px}
+.barra i{display:block;height:100%;background:var(--ok);border-radius:99px}
+.panel{background:var(--panel);border:1px solid var(--borde);border-radius:14px;box-shadow:var(--sombra);padding:12px;min-width:0}
+.ctrl{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--borde);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--suave);padding:5px 11px;font:inherit;font-size:13px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--borde)}
+.seg button[aria-pressed=true]{background:var(--acento);color:#fff;font-weight:600}
+.seg button:focus-visible,select:focus-visible,.nav:focus-visible,.chip:focus-visible{outline:2px solid var(--acento);outline-offset:2px}
+select,.nav{border:1px solid var(--borde);background:var(--panel);color:var(--texto);border-radius:9px;padding:5px 9px;font:inherit;font-size:13px}
+.nav{cursor:pointer}.nav[disabled]{opacity:.4;cursor:default}
+#grafico{position:relative}
+#grafico svg{display:block;width:100%;height:auto;overflow:visible}
+.leyenda{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;color:var(--suave);font-size:12px}
+.leyenda span{display:inline-flex;align-items:center;gap:6px}
+.leyenda i{width:14px;height:3px;border-radius:2px;display:inline-block}
+.leyenda i.banda{height:10px;width:10px;background:var(--err-bg);border:1px solid var(--err)}
+.tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--borde);border-radius:9px;box-shadow:var(--sombra);padding:6px 9px;font-size:12px;white-space:nowrap;z-index:3;display:none}
+.vacio{color:var(--tenue);padding:26px 8px;text-align:center}
+.nota{color:var(--tenue);font-size:12px;margin-top:4px}
+.cargas{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.carga-t{font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.carga p{margin:3px 0;color:var(--suave);font-size:13px;overflow-wrap:anywhere}
+.carga p.e{color:var(--err)}.carga p.w{color:var(--warn)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--borde);background:transparent;color:var(--suave);border-radius:999px;padding:2px 11px;font:inherit;font-size:12px;cursor:pointer}
+.chip[aria-pressed=true]{color:#fff;background:var(--acento);border-color:var(--acento);font-weight:600}
+.tabla-caja{max-height:380px;overflow:auto;border:1px solid var(--borde);border-radius:10px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--grid);vertical-align:top}
+th{position:sticky;top:0;background:var(--panel);color:var(--tenue);font-size:11px;letter-spacing:.06em;text-transform:uppercase;z-index:1;box-shadow:0 1px 0 var(--borde)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.h{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--suave)}
+td.m{overflow-wrap:anywhere;min-width:220px}
+.t-OK{color:var(--ok);font-weight:600}.t-ERROR{color:var(--err);font-weight:600}.t-EVENTO{color:var(--warn);font-weight:600}.t-INICIO{color:var(--ini);font-weight:600}.t-inc{color:var(--tenue)}
+.pie{margin:18px 0 6px;color:var(--tenue);font-size:12px;text-align:center}
+.oculto{display:none!important}
+@media (max-width:600px){.wrap{padding:12px}.lat b{font-size:26px}.reloj{text-align:left;justify-content:flex-start}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1><span>Monitor de Red</span><span class="pill" id="ver"></span><span class="alias" id="alias"></span></h1>
+      <div class="sub" id="ident">Conectando…</div>
+      <div class="sub" id="sesion"></div>
+    </div>
+    <div class="reloj"><span class="dot" id="punto"></span><span id="reloj">—</span></div>
+  </header>
+  <div class="alertas" id="alertas" role="status" aria-live="polite"></div>
+
+  <section aria-labelledby="h-dest">
+    <div class="sec-cab"><h2 id="h-dest">Destinos</h2><span class="nota" id="nota-dest"></span></div>
+    <div class="tarjetas" id="tarjetas"></div>
+  </section>
+
+  <section aria-labelledby="h-graf">
+    <div class="sec-cab">
+      <h2 id="h-graf">Latencia</h2>
+      <div class="ctrl">
+        <div class="seg" role="group" aria-label="Vista del gráfico">
+          <button type="button" id="m-vivo" aria-pressed="true">En vivo</button>
+          <button type="button" id="m-dia" aria-pressed="false">Día completo</button>
+        </div>
+        <select id="ventana" aria-label="Ventana de tiempo en vivo">
+          <option value="5">5 min</option><option value="15" selected>15 min</option><option value="60">1 h</option><option value="180">3 h</option>
+        </select>
+        <span class="ctrl oculto" id="ctl-fecha">
+          <button type="button" class="nav" id="f-ant" aria-label="Día anterior">‹</button>
+          <select id="fecha" aria-label="Fecha"></select>
+          <button type="button" class="nav" id="f-sig" aria-label="Día siguiente">›</button>
+        </span>
+      </div>
+    </div>
+    <div class="panel">
+      <div id="grafico"><div class="tip" id="tip"></div><div id="svgbox"></div></div>
+      <div class="leyenda" id="leyenda"></div>
+      <div class="nota" id="nota-graf"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-car">
+    <div class="sec-cab"><h2 id="h-car">Cargas al servidor</h2></div>
+    <div class="cargas" id="cargas"></div>
+  </section>
+
+  <section aria-labelledby="h-cam">
+    <div class="sec-cab">
+      <h2 id="h-cam">Cambios del día <span id="cam-fecha"></span></h2>
+      <div class="chips" role="group" aria-label="Filtrar por tipo" id="chips"></div>
+    </div>
+    <div class="tabla-caja" tabindex="0" aria-label="Lista de cambios">
+      <table>
+        <thead><tr><th>Hora</th><th>Destino</th><th>Tipo</th><th class="n">Tiempo</th><th class="n">Lat.</th><th>Mensaje</th></tr></thead>
+        <tbody id="cuerpo"></tbody>
+      </table>
+    </div>
+    <div class="nota" id="nota-cam"></div>
+  </section>
+
+  <div class="pie">Consola de solo lectura · lee los registros de esta PC · cerrar la pestaña no detiene el monitor</div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var COLORES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)'];
+  var STALE = 15, MUESTRAS_MAX = 11000;          // ~3 h a 1 muestra/s (se recorta por ventana)
+  var S = {
+    estado: null, dia: null, diaSig: null, dias: [], fecha: null, hoy: null, ahoraSeg: 0,
+    modo: 'vivo', ventanaMin: 15, filtro: 'todos', caida: false, muestras: {}, ultimoTs: {}, hover: null
+  };
+
+  /* ---------- utilidades ---------- */
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt !== undefined && txt !== null) e.textContent = txt; return e; }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function dur(s) { if (s === null || s === undefined || isNaN(s)) return '--:--:--'; s = Math.max(0, Math.round(s)); return pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60); }
+  function segs(h) { var p = String(h).split(':'); return (+p[0]) * 3600 + (+p[1]) * 60 + (+p[2] || 0); }
+  function hhmmss(s) { s = Math.round(s); return pad(Math.floor(s / 3600) % 24) + ':' + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60); }
+  function hhmm(s) { s = Math.round(s); return pad(Math.floor(s / 3600) % 24) + ':' + pad(Math.floor(s % 3600 / 60)); }
+  function parseLocal(s) { // 'yyyy-MM-ddTHH:mm:ss' -> {fecha, seg}
+    if (!s || typeof s !== 'string') return null;
+    var m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(s);
+    return m ? { fecha: m[1], seg: (+m[2]) * 3600 + (+m[3]) * 60 + (+m[4]) } : null;
+  }
+  function fechaHora(s, ahora) { var p = parseLocal(s); if (!p) return '--'; return p.fecha === ahora.fecha ? hhmmss(p.seg) : p.fecha + ' ' + hhmm(p.seg); }
+  function diffSeg(a, b) { // segundos entre dos 'yyyy-MM-ddTHH:mm:ss' locales (b - a)
+    var pa = parseLocal(a), pb = parseLocal(b); if (!pa || !pb) return null;
+    var da = Date.UTC(+pa.fecha.slice(0, 4), +pa.fecha.slice(5, 7) - 1, +pa.fecha.slice(8, 10)) / 1000 + pa.seg;
+    var db = Date.UTC(+pb.fecha.slice(0, 4), +pb.fecha.slice(5, 7) - 1, +pb.fecha.slice(8, 10)) / 1000 + pb.seg;
+    return db - da;
+  }
+  function fechaLarga(iso) {
+    var D = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'], M = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    var d = new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)));
+    return D[d.getUTCDay()] + ' ' + d.getUTCDate() + ' ' + M[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+  }
+  function ms(v) { return (v === null || v === undefined) ? '--' : v + ' ms'; }
+  function colorDe(i) { return COLORES[i % COLORES.length]; }
+  function svgEsc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  function pedir(url) {
+    var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 4000);
+    return fetch(url, { cache: 'no-cache', signal: ac.signal }).then(function (r) {
+      clearTimeout(t); if (!r.ok) throw new Error(r.status); return r.json();
+    }, function (e) { clearTimeout(t); throw e; });
+  }
+
+  /* ---------- datos ---------- */
+  function tomarEstado(est) {
+    S.estado = est;
+    var a = parseLocal(est.ahora);
+    if (a) { S.hoy = a.fecha; S.ahoraSeg = a.seg; if (!S.fecha) S.fecha = a.fecha; }
+    // Muestras en vivo: una por cada status.json nuevo (la pagina las acumula mientras esta abierta).
+    var st = est.status;
+    if (st && st.targets && a && st.timestamp && !(st.running === false)) {
+      st.targets.forEach(function (t) {
+        var k = t.address, ts = st.timestamp + '|' + k;
+        if (S.ultimoTs[k] === ts) return;
+        S.ultimoTs[k] = ts;
+        var arr = S.muestras[k] || (S.muestras[k] = []);
+        var tpo = parseLocal(st.timestamp);
+        if (!tpo) return;
+        var abs = diffSeg(a.fecha + 'T00:00:00', tpo.fecha + 'T' + hhmmss(tpo.seg));   // segundos desde 00:00 de "hoy"
+        var ok = t.status === 'OK';
+        arr.push({ x: abs, v: (ok && typeof t.latency === 'number') ? t.latency : null, ok: ok });
+        if (arr.length > MUESTRAS_MAX) arr.splice(0, arr.length - MUESTRAS_MAX);
+      });
+    }
+  }
+
+  function filasDe(addr) {
+    if (!S.dia) return [];
+    for (var i = 0; i < S.dia.targets.length; i++) if (S.dia.targets[i].address === addr) return S.dia.targets[i].filas;
+    return [];
+  }
+  function estadisticas(addr, ahoraSeg, esHoy) {
+    var okS = 0, errS = 0, caidas = 0, lw = 0, ls = 0;
+    filasDe(addr).forEach(function (f) {
+      var ty = f[1], s = f[2], l = f[3], fl = f[5];
+      if (ty === 'OK') {
+        if (s !== null) { okS += s; if (l > 0 && s > 0) { lw += l * s; ls += s; } }
+        else if (fl === 'o' && esHoy) okS += Math.max(0, ahoraSeg - segs(f[0]));
+      } else if (ty === 'ERROR') {
+        if (fl === 'i') return;
+        caidas++;
+        if (s !== null) errS += s; else if (fl === 'o' && esHoy) errS += Math.max(0, ahoraSeg - segs(f[0]));
+      }
+    });
+    return { ok: okS, err: errS, caidas: caidas, prom: ls > 0 ? Math.round(lw / ls) : null, disp: (okS + errS) > 0 ? 100 * okS / (okS + errS) : null };
+  }
+
+  /* ---------- cabecera ---------- */
+  function pintarCabecera() {
+    var est = S.estado, st = est && est.status;
+    var ahora = parseLocal(est.ahora) || { fecha: '', seg: 0 };
+    $('alias').textContent = est.alias ? '· ' + est.alias : '';
+    if (est.alias) document.title = 'Monitor de Red - ' + est.alias;
+    var al = $('alertas'); al.textContent = '';
+    if (S.caida) al.appendChild(el('div', 'alerta err', 'Se perdió la conexión con el servidor de la consola. Ábrala de nuevo con Abrir_Consola.bat.'));
+    if (!st) {
+      $('ident').textContent = 'Esperando datos del monitor (status.json no disponible)…';
+      $('sesion').textContent = 'Si el monitor no está instalado, ejecute Instalar_Monitor.bat.';
+      $('ver').textContent = ''; $('reloj').textContent = '—';
+      $('punto').className = 'dot mala';
+      return;
+    }
+    $('ver').textContent = st.version || '';
+    var ad = st.adapter, adTxt = '(sin adaptador)';
+    if (ad && ad.name && ad.ip) adTxt = ad.name + ' (' + ad.type + (ad.ssid ? ' ' + ad.ssid : '') + ') ' + ad.ip;
+    $('ident').textContent = st.computer + ' · ' + st.user + ' · ' + adTxt;
+    var edad = diffSeg(st.timestamp, est.ahora);
+    var viejo = edad !== null && edad > STALE, detenido = st.running === false;
+    var ses = diffSeg(st.sessionStart, est.ahora);
+    var s2 = 'Sesión desde ' + String(st.sessionStart || '').replace('T', ' ') + (ses !== null ? '  (' + dur(ses) + ' activo)' : '');
+    if (st.configRevision) s2 += '  ·  Config. remota rev. ' + st.configRevision;
+    $('sesion').textContent = s2;
+    var t = parseLocal(st.timestamp);
+    $('reloj').textContent = 'Actualizado ' + (t ? hhmmss(t.seg) : '--');
+    $('punto').className = 'dot ' + ((viejo || detenido || S.caida) ? 'mala' : 'viva');
+    if (updFalla(st.update)) al.appendChild(el('div', 'alerta warn', 'La última actualización automática falló (' + (UPD_TXT[st.update.result] || [st.update.result])[0] + '): ' + (st.update.detail || 'revise diag\\update.log')));
+    if (detenido) al.appendChild(el('div', 'alerta err', 'MONITOR DETENIDO'));
+    else if (viejo) al.appendChild(el('div', 'alerta err', 'MONITOR NO ACTIVO / DATOS DESACTUALIZADOS (último dato hace ' + dur(edad) + ')'));
+  }
+
+  /* ---------- tarjetas de destinos ---------- */
+  function pintarTarjetas() {
+    var est = S.estado, st = est.status, cont = $('tarjetas');
+    var esHoy = S.fecha === S.hoy;
+    cont.textContent = '';
+    if (!st || !st.targets || !st.targets.length) { cont.appendChild(el('div', 'vacio', 'Sin destinos configurados.')); $('nota-dest').textContent = ''; return; }
+    var edad = diffSeg(st.timestamp, est.ahora), apagado = (st.running === false) || (edad !== null && edad > STALE);
+    var ints = {}; st.targets.forEach(function (t) { if (t.intervalSec) ints[t.intervalSec] = 1; });
+    var ik = Object.keys(ints); $('nota-dest').textContent = ik.length === 1 ? 'ping cada ' + ik[0] + ' s' : '';
+    st.targets.forEach(function (t, i) {
+      var e = estadisticas(t.address, S.ahoraSeg, esHoy);
+      var c = el('div', 'card');
+      var cab = el('div', 'card-cab');
+      var d = el('div', 'dest'); var sw = el('span', 'sw'); sw.style.background = colorDe(i); d.appendChild(sw); d.appendChild(el('span', null, t.address));
+      cab.appendChild(d);
+      var cls = apagado ? 'off' : t.status === 'OK' ? 'ok' : t.status === 'ERROR' ? 'err' : 'warn';
+      cab.appendChild(el('span', 'badge ' + cls, t.status || '--'));
+      c.appendChild(cab);
+      var lat = el('div', 'lat'); lat.appendChild(el('b', null, typeof t.latency === 'number' ? t.latency : '--')); lat.appendChild(el('span', null, 'ms ahora')); c.appendChild(lat);
+      var b = el('div', 'barra'); var ib = el('i'); ib.style.width = (e.disp === null ? 0 : e.disp) + '%'; b.appendChild(ib); c.appendChild(b);
+      var kv = el('dl', 'kv');
+      function fila(k, v, cl) { kv.appendChild(el('dt', null, k)); kv.appendChild(el('dd', cl || '', v)); }
+      var desde = parseLocal(t.stateSince);
+      fila('Estado desde', desde ? hhmmss(desde.seg) + ' (' + dur(t.stateDuration) + ')' : '--');
+      fila('Prom. del día', ms(e.prom));
+      fila('Última respuesta', t.lastResponse ? (function (p) { return p ? hhmmss(p.seg) : '--'; })(parseLocal(t.lastResponse)) : '--');
+      fila('Disponibilidad', e.disp === null ? '--' : e.disp.toFixed(1) + ' %');
+      fila('OK', dur(e.ok), 'ok'); fila('ERROR', dur(e.err), e.err > 0 ? 'err' : '');
+      fila('Caídas', String(e.caidas));
+      c.appendChild(kv);
+      cont.appendChild(c);
+    });
+  }
+
+  /* ---------- gráfico ---------- */
+  function escalaY(max) { // 3 marcas "redondas"
+    var paso = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+    var p = 10; for (var i = 0; i < paso.length; i++) { p = paso[i]; if (max / p <= 4) break; }
+    return { top: Math.ceil(max / p) * p, paso: p };
+  }
+  function pintarGrafico() {
+    var est = S.estado, st = est.status, box = $('svgbox'), vivo = S.modo === 'vivo', esHoy = S.fecha === S.hoy;
+    $('nota-graf').textContent = '';
+    var targets = (st && st.targets) ? st.targets.map(function (t) { return t.address; }) : [];
+    $('leyenda').textContent = '';
+    if (!targets.length) { box.textContent = ''; box.appendChild(el('div', 'vacio', 'Sin datos para graficar.')); return; }
+
+    // Series: [{x0,x1,v,ok}] por destino. 'vivo' = muestras de esta pagina; 'dia' = promedio por tramo OK del CSV.
+    var series = targets.map(function () { return []; }), x0, x1, errBandas = targets.map(function () { return []; });
+    if (vivo) {
+      if (!esHoy) { ponerModo('dia'); return pintarGrafico(); }
+      x1 = S.ahoraSeg; x0 = x1 - S.ventanaMin * 60;
+      targets.forEach(function (a, i) {
+        var arr = S.muestras[a] || [], ini = null;
+        arr.forEach(function (m) {
+          if (m.x < x0 - 5) return;
+          if (m.ok && m.v !== null) series[i].push({ x: m.x, v: m.v });
+          else series[i].push({ x: m.x, v: null });
+          if (!m.ok) { if (ini === null) ini = m.x; } else if (ini !== null) { errBandas[i].push([ini, m.x]); ini = null; }
+        });
+        if (ini !== null) errBandas[i].push([ini, x1]);
+      });
+      $('nota-graf').textContent = 'Cada punto es la latencia de un ping medida mientras esta página está abierta. Las bandas rojas son tramos sin conexión.';
+    } else {
+      var minX = 86400, maxX = 0;
+      targets.forEach(function (a, i) {
+        var filas = filasDe(a);
+        filas.forEach(function (f, j) {
+          var s = segs(f[0]);
+          if (s < minX) minX = s;
+          var fin = s;
+          if (f[1] === 'OK' || f[1] === 'ERROR') {
+            if (f[2] !== null) fin = s + f[2];
+            else if (f[5] === 'o' && esHoy) fin = S.ahoraSeg;
+          }
+          if (fin > maxX) maxX = fin;
+          if (f[5] === 'i') return;
+          if (f[1] === 'OK') {
+            var v = f[3];
+            if (f[5] === 'o' && typeof (st.targets[i] || {}).latency === 'number' && esHoy) v = st.targets[i].latency;
+            if (v !== null && v !== undefined && fin > s) series[i].push({ x: s, v: v, x2: fin });
+          } else if (f[1] === 'ERROR' && fin > s) errBandas[i].push([s, fin]);
+        });
+      });
+      if (minX >= maxX) { box.textContent = ''; box.appendChild(el('div', 'vacio', 'Sin registros para este día.')); return; }
+      x0 = Math.floor(minX / 600) * 600; x1 = esHoy ? Math.max(S.ahoraSeg, maxX) : Math.ceil(maxX / 600) * 600;
+      if (x1 - x0 < 900) x1 = x0 + 900;
+      $('nota-graf').textContent = 'Cada tramo es la latencia promedio de un periodo continuo con conexión (así se guarda en los registros). Las bandas rojas son tramos sin conexión.';
+    }
+
+    var vmax = 0;
+    series.forEach(function (sr) { sr.forEach(function (p) { if (p.v > vmax) vmax = p.v; }); });
+    var ey = escalaY(Math.max(vmax * 1.1, 20));
+    var W = Math.max(320, $('grafico').clientWidth || 800), H = W < 520 ? 210 : 260;
+    var L = 46, R = 12, T = 10, B = 24, pw = W - L - R, ph = H - T - B;
+    function X(s) { return L + (s - x0) / (x1 - x0) * pw; }
+    function Y(v) { return T + ph - (v / ey.top) * ph; }
+
+    var o = [];
+    o.push('<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Gráfico de latencia por destino">');
+    for (var v = 0; v <= ey.top; v += ey.paso) {
+      o.push('<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '" stroke="var(--grid)"/>');
+      o.push('<text x="' + (L - 6) + '" y="' + (Y(v) + 4).toFixed(1) + '" text-anchor="end" font-size="11" fill="var(--tenue)">' + v + '</text>');
+    }
+    o.push('<text x="4" y="' + (T + 4) + '" font-size="10" fill="var(--tenue)">ms</text>');
+    var span = x1 - x0, paso = span <= 900 ? 120 : span <= 3600 ? 600 : span <= 3 * 3600 ? 1800 : span <= 8 * 3600 ? 3600 : 7200;
+    for (var xs = Math.ceil(x0 / paso) * paso; xs <= x1; xs += paso) {
+      o.push('<line x1="' + X(xs).toFixed(1) + '" x2="' + X(xs).toFixed(1) + '" y1="' + T + '" y2="' + (T + ph) + '" stroke="var(--grid)" stroke-dasharray="2 4"/>');
+      o.push('<text x="' + X(xs).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="11" fill="var(--tenue)">' + hhmm(xs) + '</text>');
+    }
+    // Bandas de error (una franja fina abajo por destino y un velo suave)
+    errBandas.forEach(function (bs) {
+      bs.forEach(function (b) {
+        var a = Math.max(b[0], x0), z = Math.min(b[1], x1); if (z <= a) return;
+        o.push('<rect x="' + X(a).toFixed(1) + '" y="' + T + '" width="' + Math.max(2, X(z) - X(a)).toFixed(1) + '" height="' + ph + '" fill="var(--err-bg)"/>');
+      });
+    });
+    // Series
+    series.forEach(function (sr, i) {
+      var col = colorDe(i), d = '', pen = false, ult = null;
+      sr.forEach(function (p) {
+        if (vivo) {
+          if (p.v === null) { pen = false; return; }
+          d += (pen ? 'L' : 'M') + X(p.x).toFixed(1) + ' ' + Y(p.v).toFixed(1) + ' '; pen = true;
+        } else {
+          var a = X(Math.max(p.x, x0)).toFixed(1), z = X(Math.min(p.x2, x1)).toFixed(1), y = Y(p.v).toFixed(1);
+          if (ult !== null && Math.abs(p.x - ult) <= 2) d += 'L' + a + ' ' + y + ' L' + z + ' ' + y + ' ';
+          else d += 'M' + a + ' ' + y + ' L' + z + ' ' + y + ' ';
+          ult = p.x2;
+        }
+      });
+      if (d) o.push('<path d="' + d + '" fill="none" stroke="' + col + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>');
+    });
+    o.push('<line id="cruz" x1="0" x2="0" y1="' + T + '" y2="' + (T + ph) + '" stroke="var(--suave)" stroke-dasharray="3 3" style="display:none"/>');
+    o.push('</svg>');
+    box.innerHTML = o.join('');
+
+    var lg = $('leyenda');
+    targets.forEach(function (a, i) { var s = el('span'); var k = el('i'); k.style.background = colorDe(i); s.appendChild(k); s.appendChild(document.createTextNode(a)); lg.appendChild(s); });
+    var b = el('span'); b.appendChild(el('i', 'banda')); b.appendChild(document.createTextNode('Sin conexión')); lg.appendChild(b);
+
+    S.hover = { x0: x0, x1: x1, L: L, pw: pw, W: W, T: T, ph: ph, series: series, targets: targets, vivo: vivo };
+  }
+
+  function engancharHover() {
+    var g = $('grafico'), tip = $('tip');
+    g.addEventListener('mousemove', function (ev) {
+      var h = S.hover, svg = g.querySelector('svg'); if (!h || !svg) return;
+      var r = svg.getBoundingClientRect(), esc = h.W / r.width, px = (ev.clientX - r.left) * esc;
+      if (px < h.L || px > h.L + h.pw) { tip.style.display = 'none'; return; }
+      var xs = h.x0 + (px - h.L) / h.pw * (h.x1 - h.x0), lineas = [hhmmss(xs)];
+      h.series.forEach(function (sr, i) {
+        var mejor = null, dm = 1e9;
+        sr.forEach(function (p) {
+          var d = h.vivo ? Math.abs(p.x - xs) : (xs >= p.x && xs <= p.x2 ? 0 : 1e8);
+          if (d < dm) { dm = d; mejor = p; }
+        });
+        var lim = h.vivo ? Math.max(3, (h.x1 - h.x0) / 60) : 1e7;
+        lineas.push(h.targets[i] + ': ' + (mejor && dm <= lim && mejor.v !== null ? mejor.v + ' ms' : 'sin dato'));
+      });
+      tip.textContent = lineas.join('\n'); tip.style.whiteSpace = 'pre';
+      tip.style.display = 'block';
+      var gx = ev.clientX - g.getBoundingClientRect().left, gy = ev.clientY - g.getBoundingClientRect().top;
+      tip.style.left = Math.min(gx + 14, g.clientWidth - tip.offsetWidth - 4) + 'px'; tip.style.top = Math.max(0, gy - tip.offsetHeight - 10) + 'px';
+      var c = svg.querySelector('#cruz'); if (c) { c.setAttribute('x1', px); c.setAttribute('x2', px); c.style.display = ''; }
+    });
+    g.addEventListener('mouseleave', function () { tip.style.display = 'none'; var c = g.querySelector('#cruz'); if (c) c.style.display = 'none'; });
+  }
+
+  /* ---------- cargas al servidor ---------- */
+  function cargaTarjeta(kind, info, ahoraStr) {
+    var c = el('div', 'card carga'), ahora = parseLocal(ahoraStr) || { fecha: '', seg: 0 };
+    var cab = el('div', 'carga-t'); cab.appendChild(el('span', null, kind === 'FTP' ? 'Carga FTP' : 'Carga a la API de análisis'));
+    var bat = kind === 'FTP' ? 'Instalar_FTP.bat' : 'Instalar_DB.bat', tarea = kind === 'FTP' ? 'MRV1 FTP' : 'MRV1 DB', log = kind === 'FTP' ? 'diag\\ftp_worker.log' : 'diag\\db_worker.log';
+    function badge(t, cl) { cab.appendChild(el('span', 'badge ' + cl, t)); }
+    function p(t, cl) { c.appendChild(el('p', cl || '', t)); }
+    if (info.config === 'none') { badge('NO CONFIGURADO', 'off'); c.insertBefore(cab, c.firstChild); p('No está configurada (ejecute ' + bat + ' para habilitarla).'); return c; }
+    if (info.config === 'incomplete') { badge('CONFIGURACIÓN INCOMPLETA', 'warn'); c.insertBefore(cab, c.firstChild); p('Tiene datos faltantes (ejecute ' + bat + ' para completarla).', 'w'); return c; }
+    var st = info.status;
+    if (!st) { badge('SIN EJECUTAR', 'warn'); c.insertBefore(cab, c.firstChild); p('Configurada; aún no hay cargas registradas (espere la tarea programada \'' + tarea + '\').'); return c; }
+    var ult = fechaHora(st.timestamp, ahora), hace = diffSeg(st.timestamp, ahoraStr);
+    var prox = st.nextRun, dn = prox ? diffSeg(ahoraStr, prox) : null, atras = dn !== null && dn < 0 && (-dn) / 60 > 15;
+    var proxTxt = '--';
+    if (prox) proxTxt = dn > 0 ? fechaHora(prox, ahora) + ' (en ' + dur(dn) + ')' : (atras ? 'ATRASADA desde ' + fechaHora(prox, ahora) : 'en breve');
+    if (st.ok) {
+      badge('OK', 'ok'); c.insertBefore(cab, c.firstChild);
+      p('Última carga: ' + ult + (hace !== null ? ' (hace ' + dur(hace) + ')' : ''));
+      p('Próxima: ' + proxTxt, atras ? 'w' : '');
+      if (kind === 'FTP') p('Archivos subidos: ' + ((+st.uploadedOld || 0) + (+st.uploadedToday || 0)) + ' (días anteriores ' + (+st.uploadedOld || 0) + ' + hoy ' + (+st.uploadedToday || 0) + ')' + (st.remoteDir ? ' · Carpeta: ' + st.remoteDir : ''));
+      else p('Archivos sincronizados: ' + ((+st.syncedOld || 0) + (+st.syncedToday || 0)) + ' · Filas: ' + (+st.insertadas || 0) + ' nuevas, ' + (+st.actualizadas || 0) + ' actualizadas');
+    } else {
+      badge('ERROR', 'err'); c.insertBefore(cab, c.firstChild);
+      p('Último intento: ' + ult + (hace !== null ? ' (hace ' + dur(hace) + ')' : ''));
+      p('Próxima: ' + proxTxt, atras ? 'w' : '');
+      p(st.lastError ? String(st.lastError) : '(sin detalle; revise ' + log + ')', 'e');
+      p('Vuelva a ejecutar ' + bat + ' para corregir la configuración.', 'w');
+    }
+    if (atras) p('La tarea programada \'' + tarea + '\' no ha corrido cuando tocaba; verifique que exista y esté habilitada.', 'w');
+    return c;
+  }
+  // Actualizacion automatica de scripts: status.update lo publica el monitor leyendo diag\update_state.json.
+  var UPD_TXT = { actualizada: ['ACTUALIZADA', 'ok'], al_dia: ['AL DÍA', 'ok'], revertida: ['REVERTIDA', 'err'], error: ['ERROR', 'err'],
+    firma_invalida: ['FIRMA INVÁLIDA', 'err'], manifiesto_invalido: ['MANIFIESTO INVÁLIDO', 'err'], sin_clave: ['SIN CLAVE', 'warn'] };
+  function updFalla(u) { return !!u && (u.result === 'revertida' || u.result === 'error' || u.result === 'firma_invalida' || u.result === 'manifiesto_invalido'); }
+  function cargaUpd(est) {
+    var st = est.status, u = st && st.update, ahora = parseLocal(est.ahora) || { fecha: '', seg: 0 };
+    var c = el('div', 'card carga'), cab = el('div', 'carga-t');
+    cab.appendChild(el('span', null, 'Actualización de scripts'));
+    var ver = st && st.version ? String(st.version).replace(/^MR\s*V?/i, '') : '--';
+    function p(t, cl) { c.appendChild(el('p', cl || '', t)); }
+    if (!u) {
+      cab.appendChild(el('span', 'badge off', 'SIN DATOS')); c.appendChild(cab);
+      p('Versión instalada: ' + ver);
+      p('Esta PC todavía no ha consultado actualizaciones (requiere la API habilitada y el actualizador de la versión 1.12 o superior).');
+      return c;
+    }
+    var tx = UPD_TXT[u.result] || [String(u.result || '--').toUpperCase(), 'warn'];
+    cab.appendChild(el('span', 'badge ' + tx[1], tx[0])); c.appendChild(cab);
+    var hace = diffSeg(u.lastCheck, est.ahora);
+    p('Versión instalada: ' + ver + (u.remote && u.remote !== ver.replace(/^V/i, '') && u.result !== 'al_dia' ? '  ·  publicada: ' + u.remote : ''));
+    p('Última consulta: ' + fechaHora(u.lastCheck, ahora) + (hace !== null ? ' (hace ' + dur(hace) + ')' : ''));
+    if (u.detail) p(u.detail, updFalla(u) ? 'e' : (u.result === 'sin_clave' ? 'w' : ''));
+    if (updFalla(u)) p('Revise diag\\update.log en esta PC.', 'w');
+    return c;
+  }
+  function pintarCargas() {
+    var e = S.estado, cont = $('cargas'); cont.textContent = '';
+    cont.appendChild(cargaTarjeta('FTP', e.ftp, e.ahora));
+    cont.appendChild(cargaTarjeta('DB', e.db, e.ahora));
+    cont.appendChild(cargaUpd(e));
+  }
+
+  /* ---------- tabla de cambios ---------- */
+  var FILTROS = [['todos', 'Todos'], ['ERROR', 'Caídas'], ['OK', 'Recuperaciones'], ['EVENTO', 'Eventos'], ['INICIO', 'Inicios']];
+  function armarChips() {
+    var c = $('chips'); c.textContent = '';
+    FILTROS.forEach(function (f) {
+      var b = el('button', 'chip', f[1]); b.type = 'button'; b.setAttribute('aria-pressed', S.filtro === f[0] ? 'true' : 'false');
+      b.onclick = function () { S.filtro = f[0]; armarChips(); pintarCambios(); };
+      c.appendChild(b);
+    });
+  }
+  function pintarCambios() {
+    var tb = $('cuerpo'), esHoy = S.fecha === S.hoy;
+    $('cam-fecha').textContent = S.fecha ? '· ' + (esHoy ? 'hoy' : fechaLarga(S.fecha)) : '';
+    tb.textContent = '';
+    if (!S.dia) { $('nota-cam').textContent = ''; return; }
+    // Une los EVENTO/INICIO repetidos en varios destinos ("todos")
+    var grupos = {}, lista = [], seq = 0;
+    S.dia.targets.forEach(function (t) {
+      t.filas.forEach(function (f) {
+        seq++;
+        var o = { dest: t.address, f: f, n: 1, seq: seq, seg: segs(f[0]) };
+        if (f[1] === 'EVENTO' || f[1] === 'INICIO') {
+          var k = f[0] + '|' + f[1] + '|' + f[4];
+          if (grupos[k]) { grupos[k].n++; return; }
+          grupos[k] = o;
+        }
+        lista.push(o);
+      });
+    });
+    lista.sort(function (a, b) { return b.seg - a.seg || b.seq - a.seq; });
+    var vis = lista.filter(function (o) { return S.filtro === 'todos' || o.f[1] === S.filtro; });
+    var MAX = 300, mostrar = vis.slice(0, MAX), frag = document.createDocumentFragment();
+    mostrar.forEach(function (o) {
+      var f = o.f, tr = document.createElement('tr'), inc = f[5] === 'i';
+      var dtxt = o.n > 1 ? 'todos' : o.dest;
+      var tiempo = inc ? 'incompleto' : f[5] === 'o' ? 'en curso' : ((f[1] === 'OK' || f[1] === 'ERROR') && f[2] !== null) ? dur(f[2]) : '';
+      var lat = (f[1] === 'OK' && !inc && f[5] !== 'o' && f[3] !== null) ? f[3] + ' ms' : (f[1] === 'EVENTO' || f[1] === 'INICIO') ? '' : '--';
+      tr.appendChild(el('td', 'h', f[0])); tr.appendChild(el('td', null, dtxt));
+      tr.appendChild(el('td', inc ? 't-inc' : 't-' + f[1], f[1]));
+      tr.appendChild(el('td', 'n', tiempo)); tr.appendChild(el('td', 'n', lat));
+      tr.appendChild(el('td', 'm ' + (inc ? 't-inc' : ''), f[4]));
+      frag.appendChild(tr);
+    });
+    tb.appendChild(frag);
+    if (!vis.length) { var tr = document.createElement('tr'), td = el('td', 'vacio', lista.length ? 'Sin registros con este filtro.' : 'Sin registros este día.'); td.colSpan = 6; tr.appendChild(td); tb.appendChild(tr); }
+    $('nota-cam').textContent = vis.length > MAX ? 'Mostrando los ' + MAX + ' más recientes de ' + vis.length + '. El resto está en la carpeta logs\\ del monitor.' : (vis.length ? vis.length + ' registro(s).' : '');
+  }
+
+  /* ---------- fecha ---------- */
+  function pintarFechas() {
+    var sel = $('fecha'), prev = S.fecha, lista = S.dias.slice();
+    if (S.hoy && lista.indexOf(S.hoy) < 0) lista.unshift(S.hoy);
+    if (prev && lista.indexOf(prev) < 0) lista.push(prev);
+    lista.sort().reverse();
+    var firma = lista.join(',');
+    if (sel.getAttribute('data-f') !== firma) {
+      sel.textContent = '';
+      lista.forEach(function (d) { var o = el('option', null, (d === S.hoy ? 'Hoy · ' : '') + fechaLarga(d)); o.value = d; sel.appendChild(o); });
+      sel.setAttribute('data-f', firma);
+    }
+    sel.value = S.fecha;
+    var i = lista.indexOf(S.fecha);
+    $('f-sig').disabled = i <= 0; $('f-ant').disabled = i >= lista.length - 1 || i < 0;
+    S.listaFechas = lista;
+  }
+  function cambiarFecha(d) { S.fecha = d; S.dia = null; S.diaSig = null; if (d !== S.hoy && S.modo === 'vivo') ponerModo('dia'); cargarDia(true); render(); }
+
+  /* ---------- render y sondeo ---------- */
+  function render() {
+    if (!S.estado) return;
+    pintarCabecera(); pintarTarjetas(); pintarGrafico(); pintarCargas(); pintarFechas(); pintarCambios();
+    $('ctl-fecha').className = 'ctrl' + (S.modo === 'dia' ? '' : ' oculto');
+    $('ventana').className = S.modo === 'vivo' ? '' : 'oculto';
+  }
+  function ponerModo(m) {
+    S.modo = m;
+    $('m-vivo').setAttribute('aria-pressed', m === 'vivo' ? 'true' : 'false');
+    $('m-dia').setAttribute('aria-pressed', m === 'dia' ? 'true' : 'false');
+    if (m === 'vivo' && S.hoy) { S.fecha = S.hoy; S.dia = null; cargarDia(true); }
+    if (m === 'dia') cargarDias();
+  }
+  function cargarEstado() {
+    pedir('/api/estado').then(function (e) { S.caida = false; tomarEstado(e); render(); },
+      function () { if (!S.caida) { S.caida = true; if (S.estado) render(); else { $('ident').textContent = 'Sin conexión con el servidor de la consola.'; } } });
+  }
+  function cargarDia(forzar) {
+    if (!S.fecha) return;
+    var f = S.fecha;
+    pedir('/api/dia?fecha=' + encodeURIComponent(f)).then(function (d) {
+      if (f !== S.fecha) return;
+      S.dia = d; if (S.estado) { pintarTarjetas(); pintarGrafico(); pintarCambios(); }
+    }, function () { });
+  }
+  function cargarDias() { pedir('/api/dias').then(function (d) { S.dias = d; pintarFechas(); }, function () { }); }
+
+  $('m-vivo').onclick = function () { ponerModo('vivo'); render(); };
+  $('m-dia').onclick = function () { ponerModo('dia'); render(); };
+  $('ventana').onchange = function () { S.ventanaMin = +this.value; pintarGrafico(); };
+  $('fecha').onchange = function () { cambiarFecha(this.value); };
+  $('f-ant').onclick = function () { var l = S.listaFechas || [], i = l.indexOf(S.fecha); if (i >= 0 && i < l.length - 1) cambiarFecha(l[i + 1]); };
+  $('f-sig').onclick = function () { var l = S.listaFechas || [], i = l.indexOf(S.fecha); if (i > 0) cambiarFecha(l[i - 1]); };
+  var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { if (S.estado) pintarGrafico(); }, 120); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { cargarEstado(); cargarDia(); } });
+
+  armarChips(); engancharHover(); cargarDias();
+  cargarEstado();
+  setInterval(function () { if (!document.hidden) cargarEstado(); }, 1000);
+  setInterval(function () { if (!document.hidden && (S.fecha === S.hoy || !S.dia)) cargarDia(); }, 3000);
+  setInterval(cargarDias, 60000);
+  var primera = setInterval(function () { if (S.fecha) { clearInterval(primera); cargarDia(); } }, 200);
+})();
+</script>
+</body>
+</html>

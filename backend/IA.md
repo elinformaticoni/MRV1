@@ -172,11 +172,39 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 | `POST zombie.php?accion=confirmar` `{ "pc", "revision" }` | `X-MR-Token` | `{ ok, pc, revision }`; guarda `config_rev_aplicada` y `config_aplicada_en` en `computadoras` |
 | `GET/POST zombie.php` | Sesión (misma clave y cookie que `index.php`) | Formulario de administración |
 
-**Formulario.** Tabla de todas las PC de la base con filtro, «Marcar visibles / Desmarcar todas» y edición de **varias a la vez**: se marcan las PC, se marcan las secciones a enviar, se ajustan los valores y «Guardar» escribe un archivo por PC (con su propia revisión). «Cargar valores de la primera seleccionada» precarga desde su instrucción; «Quitar instrucción» borra el archivo (las PC conservan lo que ya aplicaron). Muestra por PC «Aplicada» (con fecha) o «Pendiente». Protegido con CSRF; **queda deshabilitado si no hay `reporte.clave`** en `config.php` (a diferencia de `index.php`, no se deja abierto).
+**Formulario [rediseñado en 1.13.1].** Pantalla de dos paneles: a la izquierda la lista de equipos (buscador, estado «Aplicada» / «Pendiente» / «Sin instrucción» y la **versión de scripts confirmada** de cada PC); a la derecha el editor del equipo elegido. Se trabaja **una PC por vez**: al seleccionarla (`zombie.php?pc=NOMBRE`) el formulario carga la instrucción guardada para corregirla (o valores sugeridos si no tiene). Secciones con casilla «enviar» (al desmarcarla sus campos se deshabilitan): destinos (filas que se agregan y quitan, hasta 8), API y FTP. «Guardar instrucción» escribe el archivo de esa PC (con su propia revisión) y «Quitar instrucción» lo borra (la PC conserva lo que ya aplicó). **«COPIAR A…»**, al pie, abre la lista de los demás equipos con buscador: lo que se ve en el formulario (guardado o no) se copia a los marcados y el equipo de origen no se modifica (si hay diferencias con lo guardado, avisa). Avisa de cambios sin guardar al cambiar de equipo o cerrar la pestaña, y tras guardar/copiar redirige a la misma página con el mensaje (sin reenviar el formulario). La sección **«Detección»** (`timeoutMs`, `networkCheckSec`) se quitó del formulario: no tenía un uso práctico y las PC conservan sus valores (2000 ms y 5 s por defecto); la API y el cliente siguen aceptándola si algún archivo antiguo la trae. Protegido con CSRF; **queda deshabilitado si no hay `reporte.clave`** en `config.php` (a diferencia de `index.php`, no se deja abierto).
 
 **Base de datos.** `sql/002_config_remota.sql` agrega `computadoras.config_rev_aplicada` (BIGINT) y `config_aplicada_en` (DATETIME); es idempotente. Sin él, el formulario funciona pero avisa que falta y no muestra la confirmación.
 
 **Comportamiento de la PC (cliente):** implementado en `Sincronizar_Config.ps1` — ver `sistema/MRV1.11.md`, sección 10.6.
+
+---
+
+## 5.2 Actualización automática de los scripts (`actualizar.php` + `Actualizar_Script.ps1`) [v1.12]
+
+`api/actualizar.php` publica a las PC la versión más reciente de los scripts. **El servidor no firma nada**: la firma RSA-SHA256 del manifiesto se hace en la PC del desarrollador con `tools/Publicar_Actualizacion.ps1` (clave privada en `%USERPROFILE%\.mrv1\update_private.xml`, nunca en el repositorio ni en el servidor). Las PC verifican esa firma con la clave pública que instaló el paquete (`config\update_pubkey.xml`), así que quien comprometa el servidor o el token no puede ejecutar código en las PC.
+
+**Contenido publicado** (`api/update/`, con `.htaccess` `Require all denied`: solo se sirve por `actualizar.php` con token):
+
+| Ruta | Qué es |
+|---|---|
+| `update/manifest.json` | `{ schemaVersion, version, generado, files:[{ name, dest ('bin'\|'root'), sha256, size }] }` |
+| `update/manifest.sig` | Firma RSA-SHA256 (base64) de los bytes exactos de `manifest.json` |
+| `update/paquete/` | Los archivos |
+| `update/pcs/<pc>.json` | Versión que informó cada PC (datos de cada instalación; no va a git) |
+
+**Endpoints** (todos con `X-MR-Token`):
+
+| Petición | Respuesta |
+|---|---|
+| `GET actualizar.php?accion=manifiesto` / `?accion=firma` | El manifiesto / su firma; `404` si todavía no hay nada publicado |
+| `GET actualizar.php?accion=archivo&nombre=X` | Un archivo del paquete, solo si está en el manifiesto (`^[A-Za-z0-9_.-]{1,80}$`) |
+| `POST actualizar.php?accion=confirmar` `{ pc, version, ok, detalle }` | Guarda lo que informó la PC |
+| `GET actualizar.php?accion=versiones` | `{ publicada, pcs:[…] }` |
+
+**Publicar una mejora:** subir el número de `version` en `sistema/Instalar_Monitor.ps1`, ejecutar `tools/Publicar_Actualizacion.ps1` y subir `api/update/` (y `actualizar.php` la primera vez) al hosting. Las PC la toman en su siguiente ciclo (cada `INICIO` y cada corrida de `Cargador_DB.ps1`, máx. una consulta cada 30 min). Lado cliente, flujo y rollback: `sistema/MRV1.11.md` sección 10.7.
+
+**Seguimiento de versiones y fallos [1.13.1].** `confirmar` guarda por PC `{ pc, version, ok, resultado, detalle, en }` (`resultado`: `actualizada`, `al_dia`, `revertida`, `error`, `firma_invalida`, `manifiesto_invalido`, `sin_clave`). El actualizador informa al cambiar de versión, ante **cada fallo** (sin repetir el mismo más de una vez al día) y como «latido» diario aunque no haya cambios, para que la versión se vea aunque la PC nunca se haya actualizado. `index.php` muestra esa versión como una etiqueta `v1.13.1` **junto al nombre de cada máquina** (lista de máquinas y gráfico de cada día): gris si está al día, ámbar si hay una versión publicada más nueva, roja si el último intento falló (con el detalle al pasar el mouse). `zombie.php` la muestra también en la lista de equipos. Funciones: `mr_version_pc()` / `mr_version_publicada()` en `lib/util.php`.
 
 ---
 
@@ -202,9 +230,12 @@ MRV1/backend/
 │   └── 002_config_remota.sql    [v1.11] Columnas de confirmación de configuración remota (idempotente)
 └── api/                          Desplegada en https://mrv1.solucionesnicaragua.com/
     ├── index.php                Formulario SPA de análisis semanal + endpoints GET de consulta
+    ├── assets/                  Logos oficiales (kore_sula_claro.svg / kore_sula_oscuro.svg) — ver sección 10
     ├── registros.php            Endpoint POST — recibe y hace upsert de las filas
-    ├── zombie.php               [v1.11] Configuración remota: formulario multi-PC + descarga/confirmación (5.1)
+    ├── zombie.php               [v1.11] Configuración remota: formulario por PC con COPIAR A + descarga/confirmación (5.1)
     ├── zombie/                  [v1.11] config.<pc>.json generados (no van a git); .htaccess bloquea el acceso directo
+    ├── actualizar.php           [v1.12] Actualización automática de scripts: manifiesto firmado + archivos + versiones (5.2)
+    ├── update/                  [v1.12] Lo que genera tools/Publicar_Actualizacion.ps1 (manifest.json/.sig, paquete/); pcs/ no va a git; .htaccess bloquea el acceso directo
     ├── lib/
     │   ├── db.php                Conexión PDO a MySQL
     │   └── util.php              Respuestas JSON, validación de token, límite de tamaño del cuerpo,
@@ -230,9 +261,47 @@ El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desin
 ## 9. Pendiente
 
 - **[v1.11] Cliente de la configuración remota — listo:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y en cada `INICIO`. Ver `sistema/MRV1.11.md` 10.6. Falta probar con una PC real contra `zombie.php`.
+- **[v1.12] Actualización automática — lista, falta estrenarla:** generar el par de claves (`tools/Publicar_Actualizacion.ps1 -NuevaClave`; respaldar la privada), reinstalar a mano las PC con el paquete que trae `sistema/update_pubkey.xml` (última reinstalación manual), subir `actualizar.php` + `update/` y publicar. Falta probar el reinicio/rollback del monitor en una PC real. Ver 5.2.
 - **[v1.11] Desplegar en producción:** ejecutar `sql/002_config_remota.sql`, subir `zombie.php` y `zombie/` (con su `.htaccess`) y tener `reporte.clave` configurada (ya están en el repositorio, solo falta llevarlos al hosting).
 - **Recordatorio — optimizar cuándo se descarga la configuración** (hoy: al terminar la carga a la API y en cada `INICIO`; para una urgencia se pide reiniciar la estación).
 
 - Desplegar `api/index.php`, poner la clave de `reporte` en `config.php` del servidor y validar el gráfico con datos reales.
 - Si se necesita más de una semana a la vez: el endpoint ya acepta hasta 31 días; faltaría el selector en la página.
 - Prueba de punta a punta con al menos 2 PCs reales enviando datos simultáneamente.
+
+---
+
+## 10. Línea gráfica (marca Kore-Sula)
+
+Guía para que cualquier IA mantenga la identidad visual al tocar `index.php`, `zombie.php` o páginas nuevas del backend.
+
+### 10.1 Recursos de marca
+
+| Recurso | Ruta | Cuándo usarlo |
+|---|---|---|
+| Logo para fondo **claro** (texto negro + pulpo naranja) | `api/assets/kore_sula_claro.svg` | Tema claro |
+| Logo para fondo **oscuro** (texto blanco + pulpo naranja) | `api/assets/kore_sula_oscuro.svg` | Tema oscuro |
+
+- Origen oficial: `D:\git\csadm\front\public\` (`kore_sula_*.svg`; `logo_kore_sula_*.png` de 470×170 si se necesita raster; `logo_kore_sula.pdf` para impresión). Proporción 470:170; no deformar ni recolorear.
+- El logo de un tema sobre el fondo del otro es ilegible: siempre poner **ambos `<img>`** y alternarlos con CSS (mismos selectores que las variables de tema: `prefers-color-scheme` + `[data-theme]`). Ver `.lg-claro` / `.lg-oscuro` en `index.php`. El `<img>` decorativo lleva `alt=""` y `aria-hidden`.
+- Tamaño: ~235 px de ancho en pantallas de acceso; no menos de ~120 px. Dejar aire alrededor (≥ la altura de la "K").
+- En la cabecera de la app de análisis el logo es opcional; en pantallas de acceso y reportes compartidos, sí.
+
+### 10.2 Color
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--kore` | `#dc672b` (naranja del pulpo) | Acento de **marca**: botón principal del login, foco de campos, franja superior de la tarjeta. Degradado a `#c2531a` / `--kore-2 #f08a4b`. |
+| `--acento` | `#0f6cbd` claro / `#4c9be8` oscuro | Acento **funcional** del análisis (selección, enlaces, `.btn.prim` dentro de la app). No mezclar con `--kore` en la misma acción. |
+| Verde (`--verde`, `#15803d`) | verde | Estado "todo bien" y descarga del monitor. |
+| `--err` | rojo | Errores y caídas de red. |
+
+Fondos, paneles, bordes y textos: siempre variables del tema (`--bg`, `--panel`, `--borde`, `--texto`, `--suave`, `--tenue`). Nunca colores fijos fuera de los de marca de arriba; todo debe verse bien en claro y oscuro.
+
+### 10.3 Estilo
+
+- Moderno y sobrio: tarjetas de esquinas 16–20 px, vidrio translúcido (`backdrop-filter`), sombras suaves, fondo con dos halos difuminados (naranja y azul) y rejilla tenue. Tipografía del sistema (`system-ui`), titulares con `letter-spacing` negativo, etiquetas pequeñas en mayúsculas espaciadas.
+- Movimiento discreto (entrada de tarjeta, pulso del punto de estado, sacudida en error), siempre desactivado con `prefers-reduced-motion`.
+- Iconos: SVG en línea, trazo 1.8–2, `currentColor`, sin librerías de terceros (el backend no carga recursos externos).
+- Accesibilidad: `label` real por campo, `role="alert"` en errores, foco visible, contraste AA.
+- Pendiente: aplicar esta línea al login de `zombie.php` (hoy usa `mr_z_pagina`, aspecto antiguo).

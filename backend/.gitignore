@@ -3,3 +3,6 @@ api/config/config.php
 
 # Instrucciones de configuracion remota generadas en el servidor (datos de cada instalacion).
 api/zombie/config.*.json
+
+# Version informada por cada PC (datos de cada instalacion).
+api/update/pcs/

@@ -88,6 +88,14 @@ function Start-ZombieSync {
         $exe = (Get-Command powershell.exe).Source
         Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $script), '-Root', ('"{0}"' -f $Root)) -WindowStyle Hidden | Out-Null
     } catch { Write-Log ('No se pudo lanzar Sincronizar_Config.ps1: ' + $_.Exception.Message) }
+    # [v1.12] Actualizacion automatica de los scripts (Actualizar_Script.ps1): mismo disparo, mismo principio de mejor esfuerzo.
+    try {
+        $upd = Join-Path $Root 'bin\Actualizar_Script.ps1'
+        if (Test-Path -LiteralPath $upd) {
+            $exe2 = (Get-Command powershell.exe).Source
+            Start-Process -FilePath $exe2 -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $upd), '-Root', ('"{0}"' -f $Root)) -WindowStyle Hidden | Out-Null
+        }
+    } catch { Write-Log ('No se pudo lanzar Actualizar_Script.ps1: ' + $_.Exception.Message) }
 }
 
 # ---------------------------------------------------------------------------------------------

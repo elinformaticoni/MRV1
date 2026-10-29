@@ -9,6 +9,7 @@
  *   GET  index.php                                     → página (SPA)
  *   GET  index.php?accion=maquinas&desde=&hasta=       → máquinas con registros en el rango
  *   GET  index.php?accion=datos&desde=&hasta=&pc[]=…   → filas de esas máquinas en el rango
+ *   GET  index.php?accion=dias&desde=&hasta=           → fechas del rango con algún registro (puntito del calendario)
  *   POST index.php?accion=eliminar_pc  {pc, csrf}      → borra una computadora y TODOS sus registros
  *   POST index.php  (clave=…)                          → inicio de sesión (si hay clave configurada)
  *   GET  index.php?salir=1                             → cerrar sesión
@@ -130,6 +131,11 @@ if ($accion !== '') {
         $pdo = mr_db();
         if ($accion === 'maquinas') {
             mr_json_response(200, mr_consultar_maquinas($pdo, $desde, $hasta));
+        }
+        if ($accion === 'dias') {
+            $st = $pdo->prepare('SELECT DISTINCT fecha FROM registros WHERE fecha BETWEEN :desde AND :hasta ORDER BY fecha');
+            $st->execute(['desde' => $desde, 'hasta' => $hasta]);
+            mr_json_response(200, ['ok' => true, 'dias' => array_map(fn($f) => substr((string) $f, 0, 10), $st->fetchAll(PDO::FETCH_COLUMN))]);
         }
         if ($accion === 'datos') {
             mr_json_response(200, mr_consultar_datos($pdo, $desde, $hasta, mr_lista_pcs()));
@@ -262,6 +268,10 @@ function mr_consultar_maquinas(PDO $pdo, string $desde, string $hasta): array
     }
 
     $lista = array_values($maq);
+    foreach ($lista as &$m) {
+        $m['version'] = mr_version_pc($m['pc']);   // versión de scripts confirmada por la PC (actualizar.php)
+    }
+    unset($m);
     usort($lista, fn($a, $b) => strcasecmp($a['alias'] ?: $a['pc'], $b['alias'] ?: $b['pc']));
 
     return ['ok' => true, 'desde' => $desde, 'hasta' => $hasta, 'maquinas' => $lista];
@@ -316,6 +326,7 @@ function mr_consultar_datos(PDO $pdo, string $desde, string $hasta, array $pcs):
     foreach ($pcs as $pc) {
         if (isset($maq[$pc])) {
             $maq[$pc]['destinos'] = array_values($maq[$pc]['destinos']);
+            $maq[$pc]['version'] = mr_version_pc($pc);
             $lista[] = $maq[$pc];
         }
     }
@@ -364,6 +375,56 @@ body{margin:0;background:var(--bg);color:var(--texto);font:14px/1.45 system-ui,-
 button,select,input{font:inherit;color:inherit}
 </style>
 <style id="estilos-app">
+/* --- Inicio de sesión (línea gráfica: ver backend/IA.md sección 10) --- */
+:root{--kore:#dc672b;--kore-2:#f08a4b;--lg-vidrio:rgba(255,255,255,.78)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--lg-vidrio:rgba(26,33,41,.72)}}
+:root[data-theme="dark"]{--lg-vidrio:rgba(26,33,41,.72)}
+.lg{position:relative;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px;overflow:hidden;isolation:isolate}
+.lg-fondo{position:absolute;inset:0;z-index:-1;pointer-events:none}
+.lg-fondo i{position:absolute;border-radius:50%;filter:blur(70px);opacity:.30}
+.lg-o1{width:46vmax;height:46vmax;background:var(--kore);top:-18vmax;right:-14vmax;animation:lgFlota 18s ease-in-out infinite alternate}
+.lg-o2{width:40vmax;height:40vmax;background:var(--acento);bottom:-20vmax;left:-14vmax;opacity:.22;animation:lgFlota 22s ease-in-out infinite alternate-reverse}
+.lg-fondo .lg-rej{inset:0;border-radius:0;filter:none;opacity:.5;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:44px 44px;-webkit-mask-image:radial-gradient(ellipse at center,#000 10%,transparent 70%);mask-image:radial-gradient(ellipse at center,#000 10%,transparent 70%)}
+@keyframes lgFlota{to{transform:translate(4vmax,3vmax) scale(1.08)}}
+.lg-tarjeta{width:100%;max-width:400px;background:var(--lg-vidrio);-webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);border:1px solid var(--borde);border-radius:20px;padding:30px 28px 24px;box-shadow:0 1px 2px rgba(16,24,40,.06),0 24px 60px -20px rgba(16,24,40,.28);animation:lgEntra .55s cubic-bezier(.2,.8,.2,1) both;position:relative}
+.lg-tarjeta::before{content:"";position:absolute;left:28px;right:28px;top:-1px;height:3px;border-radius:0 0 4px 4px;background:linear-gradient(90deg,var(--kore),var(--kore-2),var(--acento))}
+@keyframes lgEntra{from{opacity:0;transform:translateY(14px) scale(.985)}}
+.lg-logo{display:block;width:min(235px,70%);height:auto;margin:0 auto 14px}
+.lg-oscuro{display:none}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .lg-claro{display:none}:root:not([data-theme="light"]) .lg-oscuro{display:block}}
+:root[data-theme="dark"] .lg-claro{display:none}
+:root[data-theme="dark"] .lg-oscuro{display:block}
+.lg-marca{display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px;font-weight:650;letter-spacing:.16em;text-transform:uppercase;color:var(--suave)}
+.lg-punto{width:7px;height:7px;border-radius:50%;background:var(--verde);box-shadow:0 0 0 0 var(--ok);animation:lgPulso 2.4s ease-out infinite}
+@keyframes lgPulso{70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.lg-tarjeta h1{margin:10px 0 4px;text-align:center;font-size:26px;line-height:1.15;font-weight:700;letter-spacing:-.02em}
+.lg-sub{margin:0 0 22px;text-align:center;color:var(--suave);font-size:13.5px}
+.lg-etq{display:block;font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--suave);margin-bottom:6px}
+.lg-caja{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--borde);border-radius:12px;padding:0 6px 0 12px;color:var(--tenue);transition:border-color .15s,box-shadow .15s,color .15s}
+.lg-caja:focus-within{border-color:var(--kore);color:var(--kore);box-shadow:0 0 0 4px rgba(220,103,43,.18)}
+.lg-caja.mal{border-color:var(--err);box-shadow:0 0 0 4px rgba(217,45,32,.12);animation:lgSacude .4s}
+@keyframes lgSacude{20%,60%{transform:translateX(-5px)}40%,80%{transform:translateX(5px)}}
+.lg-caja input{flex:1;min-width:0;border:0;outline:0;background:transparent;padding:13px 0;font-size:15px;letter-spacing:.04em;color:var(--texto)}
+.lg-caja input::placeholder{color:var(--tenue)}
+.lg-ver{border:0;background:transparent;color:var(--tenue);border-radius:8px;width:34px;height:34px;display:grid;place-items:center;cursor:pointer}
+.lg-ver:hover,.lg-ver[aria-pressed="true"]{color:var(--kore)}
+.lg-error{margin:8px 2px 0;font-size:13px;color:var(--err);font-weight:550}
+.lg-entrar{margin-top:16px;width:100%;display:flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:13px 16px;font-weight:650;font-size:15px;color:#fff;cursor:pointer;background:linear-gradient(135deg,var(--kore),#c2531a);box-shadow:0 8px 20px -8px rgba(220,103,43,.75);transition:transform .15s,box-shadow .15s,filter .15s}
+.lg-entrar svg{transition:transform .2s}
+.lg-entrar:hover{filter:brightness(1.07);box-shadow:0 12px 26px -8px rgba(220,103,43,.85)}
+.lg-entrar:hover svg{transform:translateX(4px)}
+.lg-entrar:active{transform:translateY(1px)}
+.lg-entrar:focus-visible,.lg-dl:focus-visible{outline:3px solid var(--acento);outline-offset:2px}
+.lg-sep{display:flex;align-items:center;gap:12px;margin:20px 0 16px;color:var(--tenue);font-size:12px}
+.lg-sep::before,.lg-sep::after{content:"";flex:1;height:1px;background:var(--borde)}
+.lg-descarga{text-align:center}
+.lg-descarga p{margin:0 0 10px;color:var(--suave);font-size:13px}
+.lg-dl{display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--texto);border:1px solid var(--borde);background:var(--panel);border-radius:12px;padding:10px 16px;font-weight:600;font-size:14px;transition:border-color .15s,transform .15s}
+.lg-dl:hover{border-color:#15803d;color:#15803d;transform:translateY(-1px)}
+.lg-descarga small{display:block;margin-top:10px;color:var(--tenue);font-size:11.5px;line-height:1.45}
+.lg-pie{margin:18px 0 0;font-size:11.5px;letter-spacing:.06em;color:var(--tenue)}
+@media (max-width:420px){.lg-tarjeta{padding:26px 20px 20px;border-radius:16px}.lg-tarjeta h1{font-size:23px}}
+@media (prefers-reduced-motion: reduce){.lg *,.lg{animation:none!important;transition:none!important}}
 .app{max-width:1280px;margin:0 auto;padding:16px}
 .barra{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .barra h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.2px}
@@ -386,7 +447,21 @@ button,select,input{font:inherit;color:inherit}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.prim{background:var(--acento);border-color:var(--acento);color:var(--acento-t);font-weight:600;padding:8px 16px}
 .btn.chico{padding:3px 8px;font-size:12px}
-input[type=date],select{border:1px solid var(--borde);background:var(--panel);border-radius:7px;padding:5px 8px}
+select{border:1px solid var(--borde);background:var(--panel);border-radius:7px;padding:5px 8px}
+a.btn{text-decoration:none;color:inherit;display:inline-block}
+.pk{position:relative}
+.pk-btn{min-width:118px;text-align:left}
+.pk-pop{position:absolute;top:100%;left:0;z-index:8;margin-top:4px;width:238px;background:var(--panel);border:1px solid var(--borde);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.2);padding:8px;display:none}
+.pk-pop.abierto{display:block}
+.pk-cab{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-weight:600;font-size:13px}
+.pk-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+.pk-grid .sem{font-size:11px;color:var(--tenue);padding:2px 0}
+.pk-d{position:relative;border:1px solid transparent;background:transparent;color:var(--texto);border-radius:6px;padding:4px 0 8px;font:inherit;font-size:12px;cursor:pointer}
+.pk-d:hover{border-color:var(--acento)}
+.pk-d.rango{background:color-mix(in srgb,var(--acento) 14%,transparent)}
+.pk-d.hoy{border-color:var(--borde);font-weight:700}
+.pk-d.sel{background:var(--acento);color:var(--acento-t);font-weight:600}
+.pk-d.datos::after{content:"";position:absolute;left:50%;bottom:2px;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:var(--verde)}
 .semana-txt{font-size:13px;color:var(--suave);margin-top:6px}
 .dias{display:flex;gap:6px;flex-wrap:wrap}
 .dia-chk{display:flex;flex-direction:column;align-items:center;min-width:48px;border:1px solid var(--borde);border-radius:8px;padding:5px 6px;cursor:pointer;user-select:none;position:relative}
@@ -449,6 +524,9 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 .mr-maq-nom{font-weight:600;font-size:13px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:0 0 2px}
 .mr-maq-nom small{font-weight:400;color:var(--suave);font-size:11px}
 .mr-maq-nom small.ok{color:var(--verde);font-weight:600}
+.ver{display:inline-block;font-size:10.5px;font-weight:600;line-height:1.5;padding:0 6px;border:1px solid var(--borde);border-radius:999px;color:var(--tenue);vertical-align:middle;cursor:help;white-space:nowrap}
+.ver.vieja{color:var(--warn,#d97706);border-color:var(--warn,#d97706)}
+.ver.falla{color:var(--err);border-color:var(--err)}
 
 .mr-lbl{font-size:12px;color:var(--suave);padding-left:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mr-pista{position:relative;height:16px;background:transparent;box-shadow:inset 0 0 0 1px var(--grid);border-radius:3px;overflow:hidden}
@@ -457,6 +535,10 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 .mr-coin-capa{position:absolute;top:0;bottom:0;left:var(--col-lbl);right:var(--col-tot);z-index:0;pointer-events:none}
 .mr-coin{position:absolute;top:0;bottom:0;min-width:2px;background:var(--coin);border-left:1px solid var(--coin-borde);border-right:1px solid var(--coin-borde)}
 .mr-eje .mr-coin-tk{position:absolute;bottom:-2px;height:6px;min-width:4px;background:var(--coin-borde);border-radius:2px;z-index:2;cursor:help}
+.mr-ipfila{min-height:16px;margin-bottom:2px}
+.mr-pista-ip{position:relative;height:14px}
+.mr-ip{position:absolute;top:0;bottom:0;box-sizing:border-box;border:1px solid var(--borde);border-radius:3px;font-size:10px;line-height:12px;text-align:center;color:var(--tenue);white-space:nowrap;overflow:hidden;text-overflow:clip;cursor:help;direction:rtl}
+.mr-ip span{direction:ltr;unicode-bidi:isolate;display:inline-block}
 .mr-hora{position:absolute;top:0;bottom:0;width:1px;background:var(--grid)}
 .mr-seg{position:absolute;top:0;bottom:0}
 .mr-seg.ok{background:var(--ok)}
@@ -496,29 +578,58 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 </head>
 <body>
 <?php if (!$autenticado): ?>
-<div class="app" style="max-width:380px;padding-top:12vh">
-  <div class="panel">
-    <h1 style="font-size:18px;margin:0 0 4px">MRV1 · Análisis semanal</h1>
-    <p class="estado" style="margin:0 0 14px">Ingrese la clave de acceso a los reportes.</p>
-    <form method="post" autocomplete="off">
-      <input type="password" name="clave" required autofocus
-             style="width:100%;border:1px solid var(--borde);background:var(--panel);border-radius:7px;padding:8px 10px;margin-bottom:10px">
-      <?php if ($errorLogin !== ''): ?><p class="estado error" style="margin:0 0 10px"><?= $h($errorLogin) ?></p><?php endif; ?>
-      <button class="btn prim" type="submit" style="width:100%">Entrar</button>
+<main class="lg">
+  <div class="lg-fondo" aria-hidden="true"><i class="lg-o1"></i><i class="lg-o2"></i><i class="lg-rej"></i></div>
+  <section class="lg-tarjeta">
+    <img class="lg-logo lg-claro" src="assets/kore_sula_claro.svg" alt="Kore-Sula" width="235" height="85">
+    <img class="lg-logo lg-oscuro" src="assets/kore_sula_oscuro.svg" alt="" width="235" height="85" aria-hidden="true">
+    <div class="lg-marca"><span class="lg-punto"></span>Monitor de Red · MRV1</div>
+    <h1>Análisis semanal</h1>
+    <p class="lg-sub">Ingrese la clave de acceso para consultar los reportes de conectividad.</p>
+    <form method="post" autocomplete="off" class="lg-form">
+      <label class="lg-campo">
+        <span class="lg-etq">Clave de acceso</span>
+        <span class="lg-caja<?= $errorLogin !== '' ? ' mal' : '' ?>">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+          <input type="password" name="clave" id="lgClave" required autofocus placeholder="••••••••" autocomplete="current-password">
+          <button type="button" class="lg-ver" id="lgVer" aria-label="Mostrar u ocultar la clave" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </span>
+      </label>
+      <?php if ($errorLogin !== ''): ?><p class="lg-error" role="alert"><?= $h($errorLogin) ?></p><?php endif; ?>
+      <button class="lg-entrar" type="submit"><span>Entrar</span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </form>
-  </div>
-  <div class="panel descarga">
-    <p class="estado" style="margin:0 0 10px">¿Solo necesita instalar el monitor en una PC?</p>
-    <a class="btn descargar-mon" href="<?= $h(MR_URL_PAQUETE) ?>" rel="noopener">⬇ DESCARGA EL MONITOR</a>
-    <p class="estado" style="margin:10px 0 0;font-size:12px">Paquete MRV1 (ZIP desde GitHub). Descomprima y ejecute <code>Instalar_Monitor.bat</code> como administrador.</p>
-  </div>
-</div>
+    <div class="lg-sep"><span>o</span></div>
+    <div class="lg-descarga">
+      <p>¿Solo necesita instalar el monitor en una PC?</p>
+      <a class="lg-dl" href="<?= $h(MR_URL_PAQUETE) ?>" rel="noopener">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>
+        Descargar el monitor
+      </a>
+      <small>Paquete MRV1 (ZIP desde GitHub). Descomprima y ejecute <code>Instalar_Monitor.bat</code> como administrador.</small>
+    </div>
+  </section>
+  <p class="lg-pie">Kore-Sula · Soluciones Nicaragua</p>
+</main>
+<script>
+(function () {
+  var b = document.getElementById('lgVer'), i = document.getElementById('lgClave');
+  if (!b || !i) return;
+  b.addEventListener('click', function () {
+    var ver = i.type === 'password';
+    i.type = ver ? 'text' : 'password';
+    b.setAttribute('aria-pressed', ver ? 'true' : 'false');
+    i.focus();
+  });
+})();
+</script>
 <?php else: ?>
 <div class="app">
   <div class="barra">
     <h1>Monitor de Red · Análisis semanal</h1>
     <span class="sub">Caídas de conectividad por máquina y destino</span>
-    <div class="der"><a href="<?= $h(MR_URL_PAQUETE) ?>" rel="noopener" title="Paquete MRV1 (ZIP desde GitHub)">⬇ Descargar el monitor</a><?php if ($requiereLog): ?><a href="?salir=1">Cerrar sesión</a><?php endif; ?></div>
+    <div class="der"><a href="zombie.php" title="Configuración remota de las PC (zombie.php)">⚙ Configuración remota</a><a href="<?= $h(MR_URL_PAQUETE) ?>" rel="noopener" title="Paquete MRV1 (ZIP desde GitHub)">⬇ Descargar el monitor</a><?php if ($requiereLog): ?><a href="?salir=1">Cerrar sesión</a><?php endif; ?></div>
   </div>
   <?php if (!$requiereLog): ?>
   <div class="aviso">Acceso sin clave: cualquiera que abra esta dirección puede ver los registros. Para protegerla, agregue <code>'reporte' => ['clave' => '…']</code> en <code>config/config.php</code>.</div>
@@ -527,11 +638,15 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   <div class="panel">
     <div class="form">
       <div class="bloque">
-        <span class="etq">Semana</span>
+        <span class="etq">Rango de fechas</span>
         <div class="fila-ctl">
-          <button class="btn" id="semAnt" type="button" title="Semana anterior" aria-label="Semana anterior">◀</button>
-          <input type="date" id="semFecha" aria-label="Cualquier día de la semana">
-          <button class="btn" id="semSig" type="button" title="Semana siguiente" aria-label="Semana siguiente">▶</button>
+          <span class="estado">Desde</span><div class="pk" id="pkDesde"></div>
+          <span class="estado">Hasta</span><div class="pk" id="pkHasta"></div>
+        </div>
+        <div class="fila-ctl" style="margin-top:6px">
+          <button class="btn" id="semAnt" type="button" title="Retroceder 7 días" aria-label="Retroceder 7 días">◀</button>
+          <button class="btn" id="semSig" type="button" title="Avanzar 7 días" aria-label="Avanzar 7 días">▶</button>
+          <button class="btn chico" id="semPas" type="button">Semana anterior</button>
           <button class="btn chico" id="semHoy" type="button">Esta semana</button>
         </div>
         <div class="semana-txt" id="semTxt"></div>
@@ -551,7 +666,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
         </div>
       </div>
       <div class="bloque ancho">
-        <span class="etq" style="display:flex;gap:10px;align-items:center">Máquinas con registros en la semana
+        <span class="etq" style="display:flex;gap:10px;align-items:center">Máquinas con registros en el rango
           <span style="margin-left:auto;display:flex;gap:6px;text-transform:none;letter-spacing:0;font-weight:400">
             <button class="btn chico" id="maqTodas" type="button">Todas</button>
             <button class="btn chico" id="maqNinguna" type="button">Ninguna</button>
@@ -607,6 +722,17 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     if (cls) e.className = cls;
     if (txt != null) e.textContent = txt;
     return e;
+  }
+
+  /* Etiqueta con la versión de scripts confirmada por la PC (actualizar.php). v = { v, estado, resultado, detalle, en, publicada } */
+  function verBadge(v) {
+    if (!v || !v.v) return null;
+    var b = el('span', 'ver' + (v.estado === 'vieja' ? ' vieja' : v.estado === 'falla' ? ' falla' : ''), 'v' + v.v);
+    var t = 'Versión de los scripts confirmada por la PC: ' + v.v + (v.en ? '\n' + v.en : '');
+    if (v.estado === 'vieja') t += '\nHay una versión más nueva publicada: ' + v.publicada;
+    if (v.estado === 'falla') t += '\nLa última actualización falló' + (v.resultado ? ' (' + v.resultado + ')' : '') + (v.detalle ? ': ' + v.detalle : '');
+    b.title = t;
+    return b;
   }
 
   function tipoAdaptador(nombre) {
@@ -679,6 +805,37 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     return res.sort(function (x, y) { return x.a - y.a; });
   }
 
+  /* Tramos de IP de una máquina en un día. La IP sale del evento INICIO
+     ("PC - usuario - adaptador - IP - versión"), de "Cambio de dirección IP: A -> B"
+     y de "Cambio de adaptador: A -> B - PC - usuario - adaptador - IP - versión".
+     El primer tramo arranca en el primer registro del día y el último llega hasta el final de la cobertura. */
+  function ipsDia(filasPc, cobertura) {
+    var rx = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, cambios = [], desde = null, hasta = 0;
+    function ultima(txt) { var r = txt.match(rx); return r ? r[r.length - 1] : null; }
+    filasPc.forEach(function (f) {
+      var s = secs(f[1]), msg = f[5] || '', ip = null, m;
+      if (desde === null || s < desde) desde = s;
+      if (f[2] === 'INICIO') { m = msg.match(rx); if (m) ip = m[0]; }
+      else if (f[2] === 'EVENTO') {
+        m = /^Cambio de direcci[oó]n IP:\s*.*?->\s*(.*)$/i.exec(msg);
+        if (!m) m = /^Cambio de adaptador:\s*.*?->\s*(.*)$/i.exec(msg);
+        if (m) ip = ultima(m[1]);
+      }
+      if (ip) cambios.push({ s: s, ip: ip });
+    });
+    cobertura.forEach(function (c) { if (c.b > hasta) hasta = c.b; });
+    if (!cambios.length) return [];
+    cambios.sort(function (x, y) { return x.s - y.s; });
+    var fin = Math.max(hasta, cambios[cambios.length - 1].s), tramos = [];
+    cambios.forEach(function (c, i) {
+      var a = i === 0 ? Math.min(desde, c.s) : c.s, b = i + 1 < cambios.length ? cambios[i + 1].s : fin;
+      var u = tramos[tramos.length - 1];
+      if (u && u.ip === c.ip) { u.b = b; return; }
+      if (b > a) tramos.push({ a: a, b: b, ip: c.ip });
+    });
+    return tramos;
+  }
+
   function unir(intervalos) {
     var v = intervalos.slice().sort(function (x, y) { return x.a - y.a; }), r = [];
     v.forEach(function (i) {
@@ -705,7 +862,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       });
       opc.dias.forEach(function (d) {
         var dia = porDia[d], fd = filasPorDia[d] || {};
-        var maq = { pc: m.pc, alias: m.alias, destinos: [], adapt: [], hayDatos: false, caidas: 0, completa: false };
+        var maq = { pc: m.pc, alias: m.alias, version: m.version || null, destinos: [], adapt: [], hayDatos: false, caidas: 0, completa: false };
         var todas = [], cobertura = [], crudos = [];
         m.destinos.forEach(function (de) {
           var filas = fd[de.destino] || [];
@@ -715,6 +872,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
           crudos.push({ destino: de.destino, filas: filas, r: r });
         });
         maq.adapt = adaptadoresDia(todas, unir(cobertura));
+        maq.ips = ipsDia(todas, cobertura);
         var completa = crudos.length > 0;
         crudos.forEach(function (c) {
           var piezas = [], err = 0, ok = 0, oculto = 0, cuentan = {}, cubierto = [];
@@ -895,9 +1053,26 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       var bloque = el('div', 'mr-maq');
       var nom = el('div', 'mr-maq-nom');
       nom.appendChild(el('span', null, m.alias || m.pc));
+      var vb = verBadge(m.version); if (vb) nom.appendChild(vb);
       if (m.alias && m.alias !== m.pc) nom.appendChild(el('small', null, m.pc));
       if (m.completa) nom.appendChild(el('small', 'ok', '✓ sin caídas'));
       bloque.appendChild(nom);
+
+      if (m.ips && m.ips.length) {
+        var fi = el('div', 'mr-fila mr-ipfila');
+        fi.appendChild(el('div'));
+        var pi = el('div', 'mr-pista-ip');
+        m.ips.forEach(function (t) {
+          var b = el('div', 'mr-ip');
+          b.appendChild(el('span', null, t.ip));
+          if (!colocar(b, t.a, t.b, ini, fin)) return;
+          b.setAttribute('data-tip', 'IP ' + t.ip + '\n' + hhmmss(t.a) + ' – ' + hhmmss(t.b) + '  (' + durTexto(t.b - t.a) + ')');
+          pi.appendChild(b);
+        });
+        fi.appendChild(pi);
+        fi.appendChild(el('div'));
+        bloque.appendChild(fi);
+      }
 
       if (!m.destinos.length) {
         var fv = el('div', 'mr-fila'); fv.appendChild(el('div', 'mr-lbl', '—'));
@@ -1081,6 +1256,8 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 (function () {
   'use strict';
   var DIAS_C = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+  var MAX_DIAS = <?= MR_MAX_DIAS_RANGO ?>;   // rango máximo que acepta el servidor
+  var MESES_L = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
   var MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   var $ = function (id) { return document.getElementById(id); };
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -1097,8 +1274,8 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   function dm(s) { var d = parseISO(s); return d.getUTCDate() + ' ' + MESES[d.getUTCMonth()]; }
 
   var estado = {
-    lunes: lunesDe(hoyISO()),
-    dias: [true, true, true, true, true, false, false],   // Lun–Vie por defecto
+    desde: lunesDe(hoyISO()), hasta: sumar(lunesDe(hoyISO()), 6),
+    dias: {},   // fecha → marcada; sin entrada = Lun–Vie sí, Sáb–Dom no
     ini: 7 * 3600, fin: 15 * 3600,                        // 7:00 a 15:00 por defecto
     maquinas: [], seleccion: {}, datos: null, datosClave: '',
     redes: { cable: true, wifi: true }   // Wi-Fi visible por defecto, bandeado para distinguirlo del cable (se cambia en el reporte)
@@ -1111,7 +1288,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   function guardarForm() {
     try {
       localStorage.setItem(LS_CLAVE, JSON.stringify({
-        v: 1, lunes: estado.lunes, dias: estado.dias, ini: estado.ini, fin: estado.fin, seleccion: estado.seleccion,
+        v: 2, desde: estado.desde, hasta: estado.hasta, dias: estado.dias, ini: estado.ini, fin: estado.fin, seleccion: estado.seleccion,
         opciones: { coin: $('optCoin').checked, eventos: $('optEventos').checked, vacias: $('optVacias').checked }
       }));
     } catch (e) { }
@@ -1121,8 +1298,14 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       var raw = localStorage.getItem(LS_CLAVE);
       if (!raw) return;
       var g = JSON.parse(raw);
-      if (typeof g.lunes === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(g.lunes)) estado.lunes = lunesDe(g.lunes);
-      if (Array.isArray(g.dias) && g.dias.length === 7) estado.dias = g.dias.map(function (x) { return !!x; });
+      var esISO = function (x) { return typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x); };
+      if (esISO(g.desde) && esISO(g.hasta) && g.hasta >= g.desde && g.hasta <= sumar(g.desde, MAX_DIAS - 1)) {
+        estado.desde = g.desde; estado.hasta = g.hasta;
+        if (g.dias && typeof g.dias === 'object' && !Array.isArray(g.dias)) estado.dias = g.dias;
+      } else if (esISO(g.lunes)) {   // formato anterior (una sola semana)
+        estado.desde = lunesDe(g.lunes); estado.hasta = sumar(estado.desde, 6);
+        if (Array.isArray(g.dias) && g.dias.length === 7) g.dias.forEach(function (x, i) { estado.dias[sumar(estado.desde, i)] = !!x; });
+      }
       if (typeof g.ini === 'number' && typeof g.fin === 'number' && g.ini >= 0 && g.fin <= 86400 && g.fin > g.ini) {
         estado.ini = g.ini; estado.fin = g.fin;
       }
@@ -1160,34 +1343,123 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     estado.maquinas.forEach(function (m) { if (estado.seleccion[m.pc]) m.dias.forEach(function (d) { c[d] = true; }); });
     return c;
   }
+  function fechaDMA(s) { var p = s.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+  function diasDelRango() {
+    var r = [], f = estado.desde;
+    for (var i = 0; i < MAX_DIAS && f <= estado.hasta; i++, f = sumar(estado.desde, i)) r.push(f);
+    return r;
+  }
+  function diaMarcado(f) { return f in estado.dias ? !!estado.dias[f] : diaSemana(f) < 5; }
+  function diaSemana(f) { return (parseISO(f).getUTCDay() + 6) % 7; }
+  function esSemanaCompleta() { return diaSemana(estado.desde) === 0 && estado.hasta === sumar(estado.desde, 6); }
+  function tituloRango() {
+    var a = estado.desde, b = estado.hasta, y = parseISO(b).getUTCFullYear();
+    if (esSemanaCompleta()) return 'Semana ' + semanaISO(a) + ' · ' + dm(a) + ' al ' + dm(b) + ' ' + y;
+    return 'Del ' + dm(a) + ' ' + parseISO(a).getUTCFullYear() + ' al ' + dm(b) + ' ' + y;
+  }
   function pintarSemana() {
-    var l = estado.lunes, dmg = sumar(l, 6);
-    $('semFecha').value = l;
-    $('semTxt').textContent = 'Semana ' + semanaISO(l) + ' · lunes ' + dm(l) + ' a domingo ' + dm(dmg) + ' ' + parseISO(dmg).getUTCFullYear() +
-      (l === lunesDe(hoyISO()) ? ' (semana actual)' : '');
+    var l = estado.desde, n = diasDelRango().length;
+    var actual = lunesDe(hoyISO());
+    $('semTxt').textContent = (esSemanaCompleta()
+      ? 'Semana ' + semanaISO(l) + ' · lunes ' + dm(l) + ' a domingo ' + dm(estado.hasta) + ' ' + parseISO(estado.hasta).getUTCFullYear()
+      : n + (n === 1 ? ' día' : ' días') + ' · ' + dm(l) + ' a ' + dm(estado.hasta) + ' ' + parseISO(estado.hasta).getUTCFullYear()) +
+      (esSemanaCompleta() && l === actual ? ' (semana actual)' : esSemanaCompleta() && l === sumar(actual, -7) ? ' (semana anterior)' : '');
+    pkDesde.pintar(); pkHasta.pintar();
     var cont = $('dias'); cont.textContent = '';
     var cd = diasConDatos();
-    DIAS_C.forEach(function (n, i) {
-      var f = sumar(l, i);
+    diasDelRango().forEach(function (f) {
       var lab = document.createElement('label'); lab.className = 'dia-chk' + (cd[f] ? ' con-datos' : '');
       lab.title = cd[f] ? 'Con registros' : 'Sin registros de las máquinas seleccionadas';
-      var c = document.createElement('input'); c.type = 'checkbox'; c.checked = estado.dias[i];
-      c.onchange = function () { estado.dias[i] = c.checked; rerender(); guardarForm(); };
-      var a = document.createElement('span'); a.className = 'n'; a.textContent = n;
+      var c = document.createElement('input'); c.type = 'checkbox'; c.checked = diaMarcado(f);
+      c.onchange = function () { estado.dias[f] = c.checked; rerender(); guardarForm(); };
+      var a = document.createElement('span'); a.className = 'n'; a.textContent = DIAS_C[diaSemana(f)];
       var b = document.createElement('span'); b.className = 'd'; b.textContent = parseISO(f).getUTCDate();
       var p = document.createElement('span'); p.className = 'pt';
       lab.append(c, a, b, p); cont.appendChild(lab);
     });
   }
-  function irSemana(lunes) {
-    estado.lunes = lunes; estado.datos = null; estado.datosClave = '';
+  function irRango(desde, hasta) {
+    if (desde === estado.desde && hasta === estado.hasta) return;
+    estado.desde = desde; estado.hasta = hasta; estado.datos = null; estado.datosClave = '';
     $('reporte').textContent = ''; $('descargar').disabled = true;
     pintarSemana(); cargarMaquinas(); guardarForm();
   }
-  $('semAnt').onclick = function () { irSemana(sumar(estado.lunes, -7)); };
-  $('semSig').onclick = function () { irSemana(sumar(estado.lunes, 7)); };
+  function irSemana(lunes) { irRango(lunes, sumar(lunes, 6)); }
+  $('semAnt').onclick = function () { irRango(sumar(estado.desde, -7), sumar(estado.hasta, -7)); };
+  $('semSig').onclick = function () { irRango(sumar(estado.desde, 7), sumar(estado.hasta, 7)); };
+  $('semPas').onclick = function () { irSemana(sumar(lunesDe(hoyISO()), -7)); };
   $('semHoy').onclick = function () { irSemana(lunesDe(hoyISO())); };
-  $('semFecha').onchange = function () { if (this.value) irSemana(lunesDe(this.value)); };
+
+  // ---- Calendario con puntito verde en los días que tienen registros ------------------------
+  var diasConRegistros = {}, mesesPedidos = {};
+  function cargarMesDatos(y, m, alTerminar) {
+    var clave = y + '-' + pad(m + 1);
+    if (mesesPedidos[clave]) return;
+    mesesPedidos[clave] = true;
+    var ult = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    api({ accion: 'dias', desde: clave + '-01', hasta: clave + '-' + pad(ult) }).then(function (j) {
+      j.dias.forEach(function (d) { diasConRegistros[d] = true; });
+      alTerminar();
+    }).catch(function () { delete mesesPedidos[clave]; });
+  }
+  function crearPicker(host, leer, escribir) {
+    var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'btn pk-btn';
+    var pop = document.createElement('div'); pop.className = 'pk-pop';
+    host.append(btn, pop);
+    var vista = null;   // {y, m} del mes mostrado
+    function pintar() {
+      btn.textContent = '📅 ' + fechaDMA(leer());
+      if (pop.classList.contains('abierto')) pintarPop();
+    }
+    function pintarPop() {
+      pop.textContent = '';
+      var cab = document.createElement('div'); cab.className = 'pk-cab';
+      var ant = document.createElement('button'); ant.type = 'button'; ant.className = 'btn chico'; ant.textContent = '◀';
+      var sig = document.createElement('button'); sig.type = 'button'; sig.className = 'btn chico'; sig.textContent = '▶';
+      var tit = document.createElement('span'); tit.textContent = MESES_L[vista.m] + ' ' + vista.y;
+      ant.onclick = function () { vista.m--; if (vista.m < 0) { vista.m = 11; vista.y--; } pintarPop(); };
+      sig.onclick = function () { vista.m++; if (vista.m > 11) { vista.m = 0; vista.y++; } pintarPop(); };
+      cab.append(ant, tit, sig); pop.appendChild(cab);
+      var g = document.createElement('div'); g.className = 'pk-grid';
+      DIAS_C.forEach(function (n) { var s = document.createElement('span'); s.className = 'sem'; s.textContent = n.charAt(0); g.appendChild(s); });
+      var primero = new Date(Date.UTC(vista.y, vista.m, 1)), lead = (primero.getUTCDay() + 6) % 7;
+      var total = new Date(Date.UTC(vista.y, vista.m + 1, 0)).getUTCDate();
+      for (var i = 0; i < lead; i++) g.appendChild(document.createElement('span'));
+      var hoy = hoyISO();
+      for (var d = 1; d <= total; d++) (function (d) {
+        var f = vista.y + '-' + pad(vista.m + 1) + '-' + pad(d);
+        var b = document.createElement('button'); b.type = 'button'; b.textContent = d;
+        b.className = 'pk-d' + (diasConRegistros[f] ? ' datos' : '') + (f === hoy ? ' hoy' : '') +
+          (f === leer() ? ' sel' : (f >= estado.desde && f <= estado.hasta ? ' rango' : ''));
+        b.title = diasConRegistros[f] ? 'Con registros' : 'Sin registros';
+        b.onclick = function (e) { e.stopPropagation(); pop.classList.remove('abierto'); escribir(f); };
+        g.appendChild(b);
+      })(d);
+      pop.appendChild(g);
+      cargarMesDatos(vista.y, vista.m, function () { pintarSemana(); });
+    }
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      var abierto = pop.classList.contains('abierto');
+      document.querySelectorAll('.pk-pop.abierto').forEach(function (x) { x.classList.remove('abierto'); });
+      if (abierto) return;
+      var p = leer().split('-'); vista = { y: +p[0], m: p[1] - 1 };
+      pop.classList.add('abierto'); pintarPop();
+    };
+    pop.onclick = function (e) { e.stopPropagation(); };
+    document.addEventListener('click', function () { pop.classList.remove('abierto'); });
+    return { pintar: pintar };
+  }
+  var pkDesde = crearPicker($('pkDesde'), function () { return estado.desde; }, function (f) {
+    var h = estado.hasta;
+    if (h < f || h > sumar(f, MAX_DIAS - 1)) h = h < f ? f : sumar(f, MAX_DIAS - 1);
+    irRango(f, h);
+  });
+  var pkHasta = crearPicker($('pkHasta'), function () { return estado.hasta; }, function (f) {
+    var d = estado.desde;
+    if (d > f || f > sumar(d, MAX_DIAS - 1)) d = d > f ? f : sumar(f, -(MAX_DIAS - 1));
+    irRango(d, f);
+  });
 
   // ---- API ---------------------------------------------------------------
   function api(params) {
@@ -1210,9 +1482,9 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   // ---- Máquinas ----------------------------------------------------------
   var pedidoMaq = 0;
   function cargarMaquinas() {
-    var n = ++pedidoMaq, l = estado.lunes;
+    var n = ++pedidoMaq;
     $('maqs').innerHTML = '<div class="vacio">Cargando máquinas…</div>';
-    api({ accion: 'maquinas', desde: l, hasta: sumar(l, 6) }).then(function (j) {
+    api({ accion: 'maquinas', desde: estado.desde, hasta: estado.hasta }).then(function (j) {
       if (n !== pedidoMaq) return;
       var previa = estado.seleccion, habiaAlguna = Object.keys(previa).length > 0;
       estado.maquinas = j.maquinas; estado.seleccion = {};
@@ -1250,7 +1522,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
   function pintarMaquinas() {
     var c = $('maqs'); var puedeEliminar = c.dataset.puedeEliminar === '1'; c.textContent = '';
     if (!estado.maquinas.length) {
-      var v = document.createElement('div'); v.className = 'vacio'; v.textContent = 'Ninguna máquina envió registros en esta semana.'; c.appendChild(v);
+      var v = document.createElement('div'); v.className = 'vacio'; v.textContent = 'Ninguna máquina envió registros en este rango.'; c.appendChild(v);
       return;
     }
     estado.maquinas.forEach(function (m) {
@@ -1259,6 +1531,14 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       chk.onchange = function () { estado.seleccion[m.pc] = chk.checked; pintarSemana(); guardarForm(); };
       var info = document.createElement('div'); info.style.minWidth = '0';
       var nom = document.createElement('div'); nom.className = 'nom'; nom.textContent = m.alias || m.pc;
+      if (m.version && m.version.v) {
+        var vb = document.createElement('span'); vb.className = 'ver' + (m.version.estado === 'vieja' ? ' vieja' : m.version.estado === 'falla' ? ' falla' : '');
+        vb.textContent = 'v' + m.version.v; vb.style.marginLeft = '6px';
+        vb.title = 'Versión de los scripts confirmada por la PC: ' + m.version.v + (m.version.en ? '\n' + m.version.en : '') +
+          (m.version.estado === 'vieja' ? '\nHay una versión más nueva publicada: ' + m.version.publicada : '') +
+          (m.version.estado === 'falla' ? '\nLa última actualización falló' + (m.version.resultado ? ' (' + m.version.resultado + ')' : '') + (m.version.detalle ? ': ' + m.version.detalle : '') : '');
+        nom.appendChild(vb);
+      }
       var pc = document.createElement('div'); pc.className = 'pc';
       pc.textContent = (m.alias && m.alias !== m.pc ? m.pc + ' · ' : '') + m.dias.length + (m.dias.length === 1 ? ' día' : ' días') + ' con datos';
       var ds = document.createElement('div'); ds.className = 'dests';
@@ -1292,14 +1572,14 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 
   // ---- Generar -----------------------------------------------------------
   function seleccionadas() { return estado.maquinas.filter(function (m) { return estado.seleccion[m.pc]; }).map(function (m) { return m.pc; }); }
-  function diasElegidos() { var r = []; estado.dias.forEach(function (on, i) { if (on) r.push(sumar(estado.lunes, i)); }); return r; }
+  function diasElegidos() { return diasDelRango().filter(diaMarcado); }
   function opciones() {
-    var n = new Date(), dms = sumar(estado.lunes, 6);
+    var n = new Date();
     return {
       dias: diasElegidos(), ini: estado.ini, fin: estado.fin,
       coincidencias: $('optCoin').checked, redes: estado.redes, eventos: $('optEventos').checked, vacias: $('optVacias').checked,
       ahora: { fecha: hoyISO(), s: n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds() },
-      titulo: 'Semana ' + semanaISO(estado.lunes) + ' · ' + dm(estado.lunes) + ' al ' + dm(dms) + ' ' + parseISO(dms).getUTCFullYear(),
+      titulo: tituloRango(),
       generado: hoyISO() + ' ' + pad(n.getHours()) + ':' + pad(n.getMinutes())
     };
   }
@@ -1316,9 +1596,9 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     var pcs = seleccionadas();
     if (!pcs.length) { aviso('Seleccione al menos una máquina.', true); return; }
     if (!diasElegidos().length) { aviso('Seleccione al menos un día.', true); return; }
-    var clave = estado.lunes + '|' + pcs.join('|');
+    var clave = estado.desde + '|' + estado.hasta + '|' + pcs.join('|');
     var btn = this; btn.disabled = true; aviso('Consultando registros…');
-    api({ accion: 'datos', desde: estado.lunes, hasta: sumar(estado.lunes, 6), 'pc[]': pcs }).then(function (j) {
+    api({ accion: 'datos', desde: estado.desde, hasta: estado.hasta, 'pc[]': pcs }).then(function (j) {
       estado.datos = { desde: j.desde, hasta: j.hasta, maquinas: j.maquinas };
       // Máquinas seleccionadas sin filas: se muestran igual, vacías
       var tiene = {}; j.maquinas.forEach(function (m) { tiene[m.pc] = true; });
@@ -1350,7 +1630,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'MRV1 analisis ' + estado.lunes + ' al ' + sumar(estado.lunes, 6) + '.html';
+    a.download = 'MRV1 analisis ' + estado.desde + ' al ' + estado.hasta + '.html';
     document.body.appendChild(a); a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   };
