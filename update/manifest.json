@@ -1,0 +1,152 @@
+{
+    "schemaVersion":  2,
+    "version":  "1.13.6",
+    "generado":  "2026-10-29T02:46:49",
+    "commit":  "06bcb77fe9a5fb740a8102d1e28094b7c749ef7c",
+    "files":  [
+                  {
+                      "name":  "Monitor_Red.ps1",
+                      "dest":  "bin",
+                      "path":  "sistema/Monitor_Red.ps1",
+                      "sha256":  "535dae8547a92c9a7f0e78cf177f4c3c06e6e73ac9e86338984dadc6b7c856c2",
+                      "sha256lf":  "3e5d0863b007f5e13892d78840aa66e69f307633356ba7b33ab0609ada2d2563",
+                      "size":  42119
+                  },
+                  {
+                      "name":  "Monitor_Red_Console.ps1",
+                      "dest":  "bin",
+                      "path":  "sistema/Monitor_Red_Console.ps1",
+                      "sha256":  "41150d75e7f11e120743e50630cc3a5fd82a475078d67653780242f10b745814",
+                      "sha256lf":  "41150d75e7f11e120743e50630cc3a5fd82a475078d67653780242f10b745814",
+                      "size":  29271
+                  },
+                  {
+                      "name":  "Servidor_Consola.ps1",
+                      "dest":  "bin",
+                      "path":  "sistema/Servidor_Consola.ps1",
+                      "sha256":  "04a107246f938093c36477b5206ef3effe15a5d640375d898a2341a41263e15d",
+                      "sha256lf":  "04a107246f938093c36477b5206ef3effe15a5d640375d898a2341a41263e15d",
+                      "size":  20698
+                  },
+                  {
+                      "name":  "Consola_Web.html",
+                      "dest":  "bin",
+                      "path":  "sistema/Consola_Web.html",
+                      "sha256":  "46e96129684d35663843a648bab4a810ae23012a04eac1b20cc2b0528fa4ffe8",
+                      "sha256lf":  "46e96129684d35663843a648bab4a810ae23012a04eac1b20cc2b0528fa4ffe8",
+                      "size":  46366
+                  },
+                  {
+                      "name":  "Cargador_FTP.ps1",
+                      "dest":  "bin",
+                      "path":  "sistema/Cargador_FTP.ps1",
+                      "sha256":  "a18d7532810e1f4b7d12de131895d95c32b74cc54b6fd89487f36612cc38f636",
+                      "sha256lf":  "e7e2a7eb3e31739b21108c6d3b07a18e36d4d4118edb9c2f432fa8124625067b",
+                      "size":  15307
+                  },
+                  {
+                      "name":  "Cargador_DB.ps1",
+                      "dest":  "bin",
+                      "path":  "sistema/Cargador_DB.ps1",
+                      "sha256":  "e8cfa8131b74edcf278830cce147bb52ca05978927aa2d21ad5a5ef687758736",
+                      "sha256lf":  "e8cfa8131b74edcf278830cce147bb52ca05978927aa2d21ad5a5ef687758736",
+                      "size":  19001
+                  },
+                  {
+                      "name":  "Sincronizar_Config.ps1",
+                      "dest":  "bin",
+                      "path":  "sistema/Sincronizar_Config.ps1",
+                      "sha256":  "8df04626307016d09a6e384207a6d36121462dd4eb9ec344355ea4d3bc63dd43",
+                      "sha256lf":  "8df04626307016d09a6e384207a6d36121462dd4eb9ec344355ea4d3bc63dd43",
+                      "size":  23064
+                  },
+                  {
+                      "name":  "Actualizar_Script.ps1",
+                      "dest":  "bin",
+                      "path":  "sistema/Actualizar_Script.ps1",
+                      "sha256":  "0a68afa973691d4a8c2fd10fd44f485db05368a1f0ac6a61a42bf97898953ed2",
+                      "sha256lf":  "0a68afa973691d4a8c2fd10fd44f485db05368a1f0ac6a61a42bf97898953ed2",
+                      "size":  25688
+                  },
+                  {
+                      "name":  "Abrir_Consola.bat",
+                      "dest":  "root",
+                      "path":  "Abrir_Consola.bat",
+                      "sha256":  "3a91ef9518a51ab53500b2c9d41d01da01c4f269e5de583c308c6109303d6da6",
+                      "sha256lf":  "5ec8b5679baa8921db4ce3ca04a31e3e9da4693823d74fe8f00f16a2fa65f92b",
+                      "size":  1101
+                  },
+                  {
+                      "name":  "Instalar_Monitor.bat",
+                      "dest":  "root",
+                      "path":  "Instalar_Monitor.bat",
+                      "sha256":  "e312d0bc8514b9d10a7b6ce2db903e77462424f2cbe1303ef94434cc769949c2",
+                      "sha256lf":  "6b6466fda8181faad6a9915d74495a2a4aba14b2ece7fd66512733cac7b2a178",
+                      "size":  988
+                  },
+                  {
+                      "name":  "Instalar_Monitor.ps1",
+                      "dest":  "root",
+                      "path":  "sistema/Instalar_Monitor.ps1",
+                      "sha256":  "9c73397f6fd6ff47dfb0c391e4e5dfa8da03bbee027e0da4190cceb3f2ef5df5",
+                      "sha256lf":  "9c73397f6fd6ff47dfb0c391e4e5dfa8da03bbee027e0da4190cceb3f2ef5df5",
+                      "size":  18296
+                  },
+                  {
+                      "name":  "Instalar_FTP.bat",
+                      "dest":  "root",
+                      "path":  "sistema/Instalar_FTP.bat",
+                      "sha256":  "2f444c870f7e97cdffd5c5bcad1aaecc5bfc9a17ed46cd244ca9ec93370cf6e3",
+                      "sha256lf":  "e42737a9fc23c88da5fea358ce96027d96c691727c0e205e053091e6bb96c647",
+                      "size":  547
+                  },
+                  {
+                      "name":  "Instalar_FTP.ps1",
+                      "dest":  "root",
+                      "path":  "sistema/Instalar_FTP.ps1",
+                      "sha256":  "e3ac7ba70b369c58fb8ba2c39af832c6fc8a8953ff8edc95c611e2a57a44278a",
+                      "sha256lf":  "8af2bec53586e614ab5976c133c2ef77fede6bf6056bafe71bae86b79442dfdd",
+                      "size":  10517
+                  },
+                  {
+                      "name":  "Instalar_DB.bat",
+                      "dest":  "root",
+                      "path":  "sistema/Instalar_DB.bat",
+                      "sha256":  "a033bb54281e86f888b9b59724ce49f9664bebd022280bc3d0f1317195cfbb0a",
+                      "sha256lf":  "080998d69fde3140f0d78d821f5a9cd86c724031829b171faf17f2de67c0b718",
+                      "size":  564
+                  },
+                  {
+                      "name":  "Instalar_DB.ps1",
+                      "dest":  "root",
+                      "path":  "sistema/Instalar_DB.ps1",
+                      "sha256":  "a35bcd3399295be71824266259b72ee9ab0c6c6813a04e986c3b8be0acf830fe",
+                      "sha256lf":  "a35bcd3399295be71824266259b72ee9ab0c6c6813a04e986c3b8be0acf830fe",
+                      "size":  10056
+                  },
+                  {
+                      "name":  "Desinstalar_Monitor.bat",
+                      "dest":  "root",
+                      "path":  "Desinstalar_Monitor.bat",
+                      "sha256":  "ea622f1e8f23a3f47328b0206ed1d9a696c9962142c9f6bfa6fd4ddf15330792",
+                      "sha256lf":  "8425e85d82f223f04dcbe0c61235278767359f9a767c7bd6b17a82badf9497fe",
+                      "size":  5845
+                  },
+                  {
+                      "name":  "Desinstalar_FTP.bat",
+                      "dest":  "root",
+                      "path":  "sistema/Desinstalar_FTP.bat",
+                      "sha256":  "4cebb14362ccf75239204fd82d1738fe77f214426e5eea49382eb1258b4eb639",
+                      "sha256lf":  "d16906de7e0dbf0380bcef7de08c5fcd5c555cbd9d69353456dcb19cdfec3905",
+                      "size":  2720
+                  },
+                  {
+                      "name":  "Desinstalar_DB.bat",
+                      "dest":  "root",
+                      "path":  "sistema/Desinstalar_DB.bat",
+                      "sha256":  "67ed937901434348dfb38fbea7d907f1be2804dde0932e27dc78e72fb0f918a6",
+                      "sha256lf":  "6e79f5ea902bd6d608deebd4a078e9c2146b7e50cc19bc21cf8e82103f208da2",
+                      "size":  2743
+                  }
+              ]
+}
