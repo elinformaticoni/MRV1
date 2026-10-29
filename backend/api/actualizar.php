@@ -1,23 +1,18 @@
 <?php
 /**
  * Monitor de Red — Backend de análisis
- * actualizar.php — Actualización automática de los scripts de las PC (MRV1.12).
+ * actualizar.php — Versión de scripts que informa cada PC (MRV1.13.6).
  *
- * El servidor PUBLICA una versión (manifiesto firmado + archivos) y cada PC, por su
- * cuenta (Actualizar_Script.ps1), la descarga, verifica la firma y los hash y reemplaza
- * sus scripts. Sin reinstalar. Ver backend/IA.md sección 5.2.
+ * Las actualizaciones NO se publican aquí: las PC las toman de las etiquetas vX.Y.Z del
+ * repositorio de GitHub (ver sistema/MRV1.11.md 10.7). Este archivo solo registra qué
+ * versión tiene cada PC y cómo le fue en su última consulta, para mostrarlo junto al
+ * nombre de cada máquina en index.php y zombie.php.
  *
- *   GET  actualizar.php?accion=manifiesto          → manifest.json (X-MR-Token)
- *   GET  actualizar.php?accion=firma               → manifest.sig, firma RSA-SHA256 en base64 (X-MR-Token)
- *   GET  actualizar.php?accion=archivo&nombre=X    → un archivo del manifiesto (X-MR-Token)
- *   POST actualizar.php?accion=confirmar           → { "pc", "version", "ok", "detalle" } (X-MR-Token)
- *   GET  actualizar.php?accion=versiones           → versión que informó cada PC (X-MR-Token)
+ *   POST actualizar.php?accion=confirmar   → { "pc", "version", "ok", "resultado", "detalle", "remota" } (X-MR-Token)
+ *   GET  actualizar.php?accion=versiones   → versión que informó cada PC (X-MR-Token)
  *
- * Todo vive en api/update/ (protegida por .htaccess: nunca se sirve directo, así el token
- * siempre controla el acceso). El contenido lo genera backend/tools/Publicar_Actualizacion.ps1.
- * El servidor NUNCA firma nada: la clave privada solo existe en la PC de quien publica, y las
- * PC verifican la firma con la clave pública que se instaló con el paquete. Un servidor
- * comprometido no puede, por tanto, mandar código a las PC.
+ * Los registros viven en api/update/pcs/<pc>.json (carpeta protegida por .htaccess: nunca se
+ * sirve directo, así el token siempre controla el acceso). Ver backend/IA.md sección 5.2.
  */
 
 declare(strict_types=1);
@@ -25,9 +20,8 @@ declare(strict_types=1);
 require __DIR__ . '/lib/util.php';
 require __DIR__ . '/lib/db.php';   // mr_config() (token); no se abre ninguna conexión a la base
 
-const MR_UPD_DIR     = __DIR__ . '/update';
-const MR_UPD_PAQUETE = MR_UPD_DIR . '/paquete';
-const MR_UPD_PCS     = MR_UPD_DIR . '/pcs';
+const MR_UPD_DIR = __DIR__ . '/update';
+const MR_UPD_PCS = MR_UPD_DIR . '/pcs';
 
 mr_instalar_manejador_errores();
 mr_validar_token();
@@ -36,51 +30,6 @@ header('X-Content-Type-Options: nosniff');
 
 $accion = (string) ($_GET['accion'] ?? '');
 $metodo = (string) ($_SERVER['REQUEST_METHOD'] ?? '');
-
-/** Devuelve el manifiesto decodificado o corta con 404 si todavía no se publicó nada. */
-function mr_upd_manifiesto(): array
-{
-    $ruta = MR_UPD_DIR . '/manifest.json';
-    $crudo = is_file($ruta) ? file_get_contents($ruta) : false;
-    $m = $crudo === false ? null : json_decode($crudo, true);
-    if (!is_array($m) || !is_array($m['files'] ?? null)) {
-        mr_error(404, 'No hay ninguna actualización publicada.');
-    }
-    return $m;
-}
-
-function mr_upd_enviar(string $ruta, string $tipo): void
-{
-    http_response_code(200);
-    header('Content-Type: ' . $tipo);
-    header('Content-Length: ' . (string) filesize($ruta));
-    readfile($ruta);
-    exit;
-}
-
-if ($accion === 'manifiesto' || $accion === 'firma') {
-    if ($metodo !== 'GET') { mr_error(405, 'Método no permitido. Usa GET.'); }
-    mr_upd_manifiesto();
-    if ($accion === 'manifiesto') {
-        mr_upd_enviar(MR_UPD_DIR . '/manifest.json', 'application/json; charset=utf-8');
-    }
-    $sig = MR_UPD_DIR . '/manifest.sig';
-    if (!is_file($sig)) { mr_error(404, 'El manifiesto publicado no tiene firma.'); }
-    mr_upd_enviar($sig, 'text/plain; charset=utf-8');
-}
-
-if ($accion === 'archivo') {
-    if ($metodo !== 'GET') { mr_error(405, 'Método no permitido. Usa GET.'); }
-    $nombre = (string) ($_GET['nombre'] ?? '');
-    if (!preg_match('/^[A-Za-z0-9_.-]{1,80}$/', $nombre)) { mr_error(422, 'Parámetro "nombre" inválido.'); }
-    $enManifiesto = false;
-    foreach (mr_upd_manifiesto()['files'] as $f) {
-        if (is_array($f) && ($f['name'] ?? null) === $nombre) { $enManifiesto = true; break; }
-    }
-    $ruta = MR_UPD_PAQUETE . '/' . $nombre;
-    if (!$enManifiesto || !is_file($ruta)) { mr_error(404, 'Archivo no publicado.'); }
-    mr_upd_enviar($ruta, 'application/octet-stream');
-}
 
 if ($accion === 'confirmar') {
     if ($metodo !== 'POST') { mr_error(405, 'Método no permitido. Usa POST.'); }
@@ -94,16 +43,20 @@ if ($accion === 'confirmar') {
     if (!in_array($resultado, ['actualizada', 'al_dia', 'revertida', 'error', 'firma_invalida', 'manifiesto_invalido', 'sin_clave'], true)) {
         $resultado = '';
     }
+    // Versión más reciente que la PC vio en las etiquetas de GitHub (sirve para marcar a las que están atrasadas).
+    $remota = trim((string) ($body['remota'] ?? ''));
+    if (!preg_match('/^\d+(\.\d+){1,3}$/', $remota)) { $remota = ''; }
     if (!is_dir(MR_UPD_PCS) && !@mkdir(MR_UPD_PCS, 0755, true) && !is_dir(MR_UPD_PCS)) {
         mr_error(500, 'No se pudo crear la carpeta de registro de versiones.');
     }
     $registro = [
-        'pc'      => $pc,
-        'version' => $ver,
-        'ok'      => (bool) ($body['ok'] ?? true),
+        'pc'        => $pc,
+        'version'   => $ver,
+        'ok'        => (bool) ($body['ok'] ?? true),
         'resultado' => $resultado,
-        'detalle' => $detalle,
-        'en'      => date('Y-m-d H:i:s'),
+        'detalle'   => $detalle,
+        'remota'    => $remota,
+        'en'        => date('Y-m-d H:i:s'),
     ];
     $destino = MR_UPD_PCS . '/' . strtolower($pc) . '.json';
     if (file_put_contents($destino, json_encode($registro, JSON_UNESCAPED_UNICODE), LOCK_EX) === false) {

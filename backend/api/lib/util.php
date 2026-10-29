@@ -112,17 +112,20 @@ function mr_leer_cuerpo_json(): array
 }
 
 /**
- * Versión de los scripts publicada actualmente (api/update/manifest.json), o null si no hay.
+ * Versión de los scripts más reciente que alguna PC vio en las etiquetas de GitHub (campo "remota" de
+ * api/update/pcs/<pc>.json), o null si ninguna la informó.
  */
 function mr_version_publicada(): ?string
 {
     static $v = false;
     if ($v === false) {
         $v = null;
-        $ruta = __DIR__ . '/../update/manifest.json';
-        $m = is_file($ruta) ? json_decode((string) @file_get_contents($ruta), true) : null;
-        if (is_array($m) && is_string($m['version'] ?? null) && preg_match('/^\d+(\.\d+){1,3}$/', $m['version'])) {
-            $v = $m['version'];
+        foreach (glob(__DIR__ . '/../update/pcs/*.json') ?: [] as $f) {
+            $d = json_decode((string) @file_get_contents($f), true);
+            $r = is_array($d) ? (string) ($d['remota'] ?? '') : '';
+            if (preg_match('/^\d+(\.\d+){1,3}$/', $r) && ($v === null || version_compare($r, $v, '>'))) {
+                $v = $r;
+            }
         }
     }
     return $v;

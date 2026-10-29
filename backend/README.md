@@ -1,8 +1,8 @@
 # Backend de análisis — Monitor de Red (MRV1 → MySQL)
 
-Estado (MRV1.10): base de datos, API de recepción y formulario de análisis semanal funcionando. En producción: `https://mrv1.solucionesnicaragua.com/` (formulario) y `https://mrv1.solucionesnicaragua.com/registros.php` (API).
+Estado (MRV1.13.6): base de datos, API de recepción y formulario de análisis semanal funcionando. En producción: `https://mrv1.solucionesnicaragua.com/` (formulario) y `https://mrv1.solucionesnicaragua.com/registros.php` (API).
 
-Contexto y decisiones de diseño completas: [`IA.md`](./IA.md). Lado cliente (`Cargador_DB.ps1`, instaladores): [`../sistema/MRV1.10.md`](../sistema/MRV1.10.md), sección 10. Este README cubre la puesta en marcha.
+Contexto y decisiones de diseño completas: [`IA.md`](./IA.md). Lado cliente (`Cargador_DB.ps1`, instaladores): [`../sistema/MRV1.11.md`](../sistema/MRV1.11.md), sección 10. Este README cubre la puesta en marcha.
 
 ## 1. Crear la base de datos
 
@@ -70,16 +70,20 @@ Qué muestra el gráfico: verde tenue = conectado, rojo = sin conexión, blanco 
 
 1. Ejecuta `sql/002_config_remota.sql` sobre la misma base (es idempotente).
 2. Sube `api/zombie.php` y la carpeta `api/zombie/` (con su `.htaccess`, que bloquea el acceso directo). Necesita la clave `reporte.clave` de `config.php`: sin ella la página se deshabilita.
-3. Abre `https://mrv1.solucionesnicaragua.com/zombie.php`, marca una o varias PC, elige qué secciones enviar y guarda. El archivo de cada PC queda en `api/zombie/config.<pc>.json`.
+3. Abre `https://mrv1.solucionesnicaragua.com/zombie.php` y elige una PC de la lista: el formulario carga su instrucción guardada para corregirla. Marca qué secciones enviar (destinos, API, FTP) y guarda. Con **COPIAR A…**, al pie, copias esos mismos valores a los equipos que marques. El archivo de cada PC queda en `api/zombie/config.<pc>.json`.
 4. Prueba con `curl`:
    ```bash
    curl -H "X-MR-Token: TU_TOKEN_AQUI" "https://mrv1.solucionesnicaragua.com/zombie.php?accion=config&pc=NOMBRE-PC"
    ```
    Responde el JSON de esa PC, o `404` si no tiene instrucción.
 
-Las PC la aplicarán cuando exista `Sincronizar_Config.ps1` (cliente, pendiente). Detalle: `IA.md` sección 5.1.
+Las PC la aplican con `Sincronizar_Config.ps1`. Detalle: `IA.md` sección 5.1.
 
-## 6. Pendiente
+## 6. Versión de scripts de cada PC (`actualizar.php`) [1.13.6]
+
+Sube `api/actualizar.php` y la carpeta `api/update/` (con su `.htaccess`). **No se publica nada aquí:** las actualizaciones salen de las etiquetas del repositorio de GitHub (ver `../sistema/MRV1.11.md` 10.7). Este archivo solo guarda la versión que informa cada PC, y `index.php` / `zombie.php` la muestran junto al nombre de la máquina (ámbar = atrasada, roja = falló la última actualización). Detalle: `IA.md` sección 5.2.
+
+## 7. Pendiente
 
 - Configurar `'reporte' => ['clave' => …]` en el `config.php` de producción.
 - Prueba de punta a punta con varias PC reales enviando datos a la vez.
@@ -95,10 +99,17 @@ backend/
 ├── README.md                    (este archivo)
 ├── .gitignore
 ├── sql/
-│   └── 001_crear_base.sql       Crea las tablas computadoras y registros
+│   ├── 001_crear_base.sql       Crea las tablas computadoras y registros
+│   └── 002_config_remota.sql    Columnas de la configuración remota (idempotente)
+├── tools/
+│   └── Publicar_Actualizacion.bat / .ps1   Publica una versión (manifiesto firmado + etiqueta); solo para el desarrollador
 └── api/
     ├── index.php                Formulario SPA de análisis semanal (GET, solo lectura)
     ├── registros.php            Endpoint POST que reciben los datos
+    ├── zombie.php               Configuración remota de las PC (formulario + API para las PC)
+    ├── actualizar.php           Informe de la versión de scripts de cada PC
+    ├── assets/                  Logos de la marca
+    ├── zombie/, update/         Datos generados en el servidor (no van a git); .htaccess bloquea el acceso directo
     ├── lib/
     │   ├── db.php                Conexión PDO a MySQL
     │   └── util.php              Respuestas JSON, validación de token, lectura de cuerpo

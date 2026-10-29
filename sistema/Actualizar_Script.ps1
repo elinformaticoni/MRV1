@@ -154,7 +154,7 @@ function Get-Bytes([string]$url, [string]$token) {
 function Send-Confirm([string]$baseUrl, [string]$token, [string]$version, [bool]$ok, [string]$detalle, [string]$resultado = '') {
     if ([string]::IsNullOrEmpty($baseUrl)) { return }   # sin API habilitada no hay a quien informar (la actualizacion no depende de eso)
     try {
-        $body = [ordered]@{ pc = $pc; version = $version; ok = $ok; resultado = $resultado; detalle = $detalle } | ConvertTo-Json -Compress
+        $body = [ordered]@{ pc = $pc; version = $version; ok = $ok; resultado = $resultado; detalle = $detalle; remota = [string]$script:RemotaVista } | ConvertTo-Json -Compress
         Invoke-WebRequest -Uri ($baseUrl + '?accion=confirmar') -Method Post -Headers @{ 'X-MR-Token' = $token } `
             -ContentType 'application/json; charset=utf-8' -Body ($utf8.GetBytes($body)) -TimeoutSec 20 -UseBasicParsing | Out-Null
         Set-Reportado $version $resultado
@@ -292,6 +292,7 @@ try {
     $remota = $null
     try { $remota = Get-LatestTag $refsUrl }
     catch { Write-Log ('No se pudo consultar las etiquetas del repositorio: ' + $_.Exception.Message); exit 0 }
+    $script:RemotaVista = $remota   # se informa al servidor junto con la version instalada
     if (-not $remota) { Save-State 'al_dia' '' 'El repositorio no tiene ninguna version etiquetada.'; Send-ReportIfDue $baseUrl $token 'al_dia' $true 'Sin version etiquetada.'; exit 0 }
     if ([version]$remota -le [version]$local) { Save-State 'al_dia' $remota 'Sin cambios.'; Send-ReportIfDue $baseUrl $token 'al_dia' $true 'Sin cambios.'; exit 0 }
     # Una version que ya se intento y fue revertida no se reintenta en cada ciclo (solo con -Force o cuando se publique otra mayor).

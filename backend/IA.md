@@ -2,19 +2,19 @@
 
 | | |
 |---|---|
-| Estado | [v1.11] Capa de análisis funcionando en producción (BD + API) y `Cargador_DB.ps1` integrado al instalador de MRV1 (paquete 1.8). Formulario de análisis semanal (`api/index.php`) construido — pendiente de desplegar y probar con datos reales. Configuración remota (`zombie.php` + `Sincronizar_Config.ps1`, sección 5.1) completa en servidor y cliente — pendiente desplegar `sql/002_config_remota.sql` y `zombie.php`/`zombie/` en producción (sección 9). |
+| Estado | [1.13.6] Capa de análisis en producción (BD + API); `Cargador_DB.ps1` integrado al instalador. Formulario de análisis semanal (`api/index.php`) con barra de IP y versión de scripts junto al nombre de cada PC. Configuración remota (`zombie.php`, edición por PC y «COPIAR A…») + `Sincronizar_Config.ps1`. Actualización automática desde etiquetas de GitHub (`tools/Publicar_Actualizacion.bat`; `actualizar.php` solo recibe la versión que informa cada PC). Pendiente de desplegar en producción: `sql/002_config_remota.sql`, `zombie.php`, `actualizar.php`, `index.php` (sección 9). |
 | Ubicación en el repositorio | `MRV1/backend/` — vive **dentro** del paquete `MRV1/` para mantener todo en el mismo repositorio, pero es una capa independiente: **el instalador de MRV1 nunca copia ni toca esta carpeta** al instalar en una PC cliente. |
 | Repositorio | `https://github.com/elinformaticoni/MRV1.git` |
 | API en producción | `https://mrv1.solucionesnicaragua.com/registros.php` — hosting DirectAdmin, base de datos `soluci12_MRV1`, PHP 8.3.33. |
-| Guía del monitor | `MRV1/sistema/MRV1.10.md` — arquitectura completa de MRV1, incluyendo `Cargador_DB.ps1` y el instalador (`Instalar_DB.ps1`). Este documento cubre solo el lado servidor (BD + API). |
+| Guía del monitor | `MRV1/sistema/MRV1.11.md` — arquitectura completa de MRV1, incluyendo `Cargador_DB.ps1` y el instalador (`Instalar_DB.ps1`). Este documento cubre solo el lado servidor (BD + API). |
 
 ---
 
 ## 0. Reglas para cualquier IA
 
-1. Este documento es el contexto maestro del lado servidor (BD + API). El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, integración con el instalador de MRV1) está documentado en `MRV1/sistema/MRV1.10.md`, sección "Carga a la API de análisis".
+1. Este documento es el contexto maestro del lado servidor (BD + API). El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, integración con el instalador de MRV1) está documentado en `MRV1/sistema/MRV1.11.md`, sección "Carga a la API de análisis".
 2. **No eliminar funcionalidad existente.** El Cargador FTP y el CSV local de MRV1 siguen funcionando exactamente igual; esta capa es un agregado opcional.
-3. Si se cambia algo de esta arquitectura, actualizar este documento y, si el cambio afecta al cliente, también `MRV1/sistema/MRV1.10.md`.
+3. Si se cambia algo de esta arquitectura, actualizar este documento y, si el cambio afecta al cliente, también `MRV1/sistema/MRV1.11.md`.
 
 ---
 
@@ -42,7 +42,7 @@ Monitor_Red.ps1 ──► CSV local
 |---|---|---|
 | Tablas MySQL (`computadoras`, `registros`) | Hosting `solucionesnicaragua.com` (BD `soluci12_MRV1`) | Almacenan los registros de todas las PCs |
 | API de recepción (PHP) | `https://mrv1.solucionesnicaragua.com/registros.php` | Recibe filas, valida token, hace upsert en MySQL |
-| `Cargador_DB.ps1` + `Instalar_DB.ps1` | PC del cliente, dentro de `MRV1/` | Ver `MRV1/sistema/MRV1.10.md` |
+| `Cargador_DB.ps1` + `Instalar_DB.ps1` | PC del cliente, dentro de `MRV1/` | Ver `MRV1/sistema/MRV1.11.md` |
 | Formulario de análisis semanal (SPA) + descarga del reporte HTML | `https://mrv1.solucionesnicaragua.com/` (`api/index.php`) | Selector de semana/días/horario/máquinas, gráfico y HTML autocontenido |
 
 ---
@@ -180,33 +180,21 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 
 ---
 
-## 5.2 Actualización automática de los scripts (`actualizar.php` + `Actualizar_Script.ps1`) [v1.12]
+## 5.2 Actualización automática de los scripts (`Actualizar_Script.ps1` + informe de versiones en `actualizar.php`) [v1.12 · origen GitHub desde 1.13.6]
 
-> **[1.13.6] El origen de las actualizaciones pasó a ser GitHub.** Las PC consultan las etiquetas `vX.Y.Z` del repositorio público y descargan el manifiesto firmado y los archivos de esa etiqueta (`update/manifest.json` y `update/manifest.sig` en la raíz del repositorio; ver `sistema/MRV1.11.md` 10.7). Por eso **ya no hay que subir nada a este servidor para publicar**. De este módulo solo se sigue usando `confirmar` y `versiones` (la versión que informa cada PC, que `index.php` y `zombie.php` muestran). Los endpoints `manifiesto`, `firma` y `archivo` y la carpeta `api/update/` (`manifest.*`, `paquete/`) quedaron sin uso y pueden borrarse; el texto de abajo describe el diseño anterior, vigente solo para ellos.
+**Las actualizaciones no se publican en este servidor.** Las PC consultan las etiquetas `vX.Y.Z` del repositorio público de GitHub y descargan de esa etiqueta un manifiesto firmado (`update/manifest.json` y `update/manifest.sig`, en la raíz del repositorio) y los archivos. Todo el flujo (publicar con `tools/Publicar_Actualizacion.bat`, firma RSA, verificación, rollback) está en `sistema/MRV1.11.md` sección 10.7. **Una etiqueta nueva = versión lista para desplegar.**
 
-`api/actualizar.php` publica a las PC la versión más reciente de los scripts. **El servidor no firma nada**: la firma RSA-SHA256 del manifiesto se hace en la PC del desarrollador con `tools/Publicar_Actualizacion.ps1` (clave privada en `%USERPROFILE%\.mrv1\update_private.xml`, nunca en el repositorio ni en el servidor). Las PC verifican esa firma con la clave pública que instaló el paquete (`config\update_pubkey.xml`), así que quien comprometa el servidor o el token no puede ejecutar código en las PC.
+`api/actualizar.php` solo registra qué versión tiene cada PC, para mostrarla junto al nombre de cada máquina:
 
-**Contenido publicado** (`api/update/`, con `.htaccess` `Require all denied`: solo se sirve por `actualizar.php` con token):
-
-| Ruta | Qué es |
+| Petición (con `X-MR-Token`) | Respuesta |
 |---|---|
-| `update/manifest.json` | `{ schemaVersion, version, generado, files:[{ name, dest ('bin'\|'root'), sha256, size }] }` |
-| `update/manifest.sig` | Firma RSA-SHA256 (base64) de los bytes exactos de `manifest.json` |
-| `update/paquete/` | Los archivos |
-| `update/pcs/<pc>.json` | Versión que informó cada PC (datos de cada instalación; no va a git) |
-
-**Endpoints** (todos con `X-MR-Token`):
-
-| Petición | Respuesta |
-|---|---|
-| `GET actualizar.php?accion=manifiesto` / `?accion=firma` | El manifiesto / su firma; `404` si todavía no hay nada publicado |
-| `GET actualizar.php?accion=archivo&nombre=X` | Un archivo del paquete, solo si está en el manifiesto (`^[A-Za-z0-9_.-]{1,80}$`) |
-| `POST actualizar.php?accion=confirmar` `{ pc, version, ok, detalle }` | Guarda lo que informó la PC |
+| `POST actualizar.php?accion=confirmar` `{ pc, version, ok, resultado, detalle, remota }` | Guarda el informe de la PC en `api/update/pcs/<pc>.json` |
 | `GET actualizar.php?accion=versiones` | `{ publicada, pcs:[…] }` |
 
-**Publicar una mejora:** subir el número de `version` en `sistema/Instalar_Monitor.ps1`, ejecutar `tools/Publicar_Actualizacion.ps1` y subir `api/update/` (y `actualizar.php` la primera vez) al hosting. Las PC la toman en su siguiente ciclo (cada `INICIO` y cada corrida de `Cargador_DB.ps1`, máx. una consulta cada 30 min). Lado cliente, flujo y rollback: `sistema/MRV1.11.md` sección 10.7.
-
-**Seguimiento de versiones y fallos [1.13.1].** `confirmar` guarda por PC `{ pc, version, ok, resultado, detalle, en }` (`resultado`: `actualizada`, `al_dia`, `revertida`, `error`, `firma_invalida`, `manifiesto_invalido`, `sin_clave`). El actualizador informa al cambiar de versión, ante **cada fallo** (sin repetir el mismo más de una vez al día) y como «latido» diario aunque no haya cambios, para que la versión se vea aunque la PC nunca se haya actualizado. `index.php` muestra esa versión como una etiqueta `v1.13.1` **junto al nombre de cada máquina** (lista de máquinas y gráfico de cada día): gris si está al día, ámbar si hay una versión publicada más nueva, roja si el último intento falló (con el detalle al pasar el mouse). `zombie.php` la muestra también en la lista de equipos. Funciones: `mr_version_pc()` / `mr_version_publicada()` en `lib/util.php`.
+- `resultado`: `actualizada`, `al_dia`, `revertida`, `error`, `firma_invalida`, `manifiesto_invalido`, `sin_clave`. `remota` es la etiqueta más reciente que la PC vio en GitHub.
+- El actualizador informa al cambiar de versión, ante **cada fallo** (sin repetir el mismo más de una vez al día) y como «latido» diario aunque no haya cambios, así la versión se ve aunque la PC nunca se haya actualizado. Si la PC no tiene la API habilitada, no informa y la actualización funciona igual.
+- `index.php` muestra la versión como una etiqueta `v1.13.6` **junto al nombre de cada máquina** (lista de máquinas y gráfico de cada día): gris si está al día, ámbar si hay una etiqueta más nueva que la que tiene (la «publicada» es la mayor `remota` informada por cualquier PC), roja si el último intento falló (con el detalle al pasar el mouse). `zombie.php` la muestra también en la lista de equipos. Funciones: `mr_version_pc()` y `mr_version_publicada()` en `lib/util.php`.
+- `api/update/` solo contiene `pcs/` (datos de cada instalación, no van a git) y un `.htaccess` con `Require all denied`: nunca se sirve directo.
 
 ---
 
@@ -236,8 +224,8 @@ MRV1/backend/
     ├── registros.php            Endpoint POST — recibe y hace upsert de las filas
     ├── zombie.php               [v1.11] Configuración remota: formulario por PC con COPIAR A + descarga/confirmación (5.1)
     ├── zombie/                  [v1.11] config.<pc>.json generados (no van a git); .htaccess bloquea el acceso directo
-    ├── actualizar.php           [v1.12] Actualización automática de scripts: manifiesto firmado + archivos + versiones (5.2)
-    ├── update/                  [v1.12] Lo que genera tools/Publicar_Actualizacion.ps1 (manifest.json/.sig, paquete/); pcs/ no va a git; .htaccess bloquea el acceso directo
+    ├── actualizar.php           [v1.12] Informe de la versión de scripts de cada PC (5.2); las actualizaciones salen de las etiquetas de GitHub
+    ├── update/                  [v1.12] pcs/<pc>.json: versión informada por cada PC (no va a git); .htaccess bloquea el acceso directo
     ├── lib/
     │   ├── db.php                Conexión PDO a MySQL
     │   └── util.php              Respuestas JSON, validación de token, límite de tamaño del cuerpo,
@@ -248,7 +236,7 @@ MRV1/backend/
         └── .htaccess             Bloquea acceso HTTP directo a esta carpeta
 ```
 
-El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desinstalar_DB.bat`, `config/db_api.example.json`) vive en `MRV1/` junto a los demás componentes del monitor — ver `MRV1/sistema/MRV1.10.md`.
+El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desinstalar_DB.bat`, `config/db_api.example.json`) vive en `MRV1/` junto a los demás componentes del monitor — ver `MRV1/sistema/MRV1.11.md`.
 
 ---
 
@@ -263,7 +251,7 @@ El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desin
 ## 9. Pendiente
 
 - **[v1.11] Cliente de la configuración remota — listo:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y en cada `INICIO`. Ver `sistema/MRV1.11.md` 10.6. Falta probar con una PC real contra `zombie.php`.
-- **[v1.12] Actualización automática — lista, falta estrenarla:** generar el par de claves (`tools/Publicar_Actualizacion.ps1 -NuevaClave`; respaldar la privada), reinstalar a mano las PC con el paquete que trae `sistema/update_pubkey.xml` (última reinstalación manual), subir `actualizar.php` + `update/` y publicar. Falta probar el reinicio/rollback del monitor en una PC real. Ver 5.2.
+- **[1.13.6] Actualización automática desde GitHub — lista, falta estrenarla:** reinstalar a mano las PC una vez con el paquete 1.13.6 (trae el actualizador y `sistema/update_pubkey.xml`), subir `actualizar.php` (solo informe de versiones) y publicar con `tools/Publicar_Actualizacion.bat` cuando se acuerde desplegar. Falta probar el reinicio y el rollback del monitor en una PC real. Ver 5.2.
 - **[v1.11] Desplegar en producción:** ejecutar `sql/002_config_remota.sql`, subir `zombie.php` y `zombie/` (con su `.htaccess`) y tener `reporte.clave` configurada (ya están en el repositorio, solo falta llevarlos al hosting).
 - **Recordatorio — optimizar cuándo se descarga la configuración** (hoy: al terminar la carga a la API y en cada `INICIO`; para una urgencia se pide reiniciar la estación).
 
