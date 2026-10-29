@@ -206,7 +206,7 @@ try {
 # pestana abierta, nunca se cierran solas. La proxima vez que se abra la consola arranca la version nueva.
 try {
     Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -match 'Servidor_Consola\.ps1' } |
+        Where-Object { $_.CommandLine -match 'Servidor_Consola\.ps1' -and $_.CommandLine -match [regex]::Escape($Root) } |
         ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch { } }
 } catch { }
 

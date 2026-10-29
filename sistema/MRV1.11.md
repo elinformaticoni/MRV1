@@ -676,31 +676,38 @@ Al aplicar:
 
 **Pendiente (recordatorio):** optimizar cuándo se descarga la configuración (hoy: en cada `INICIO` y al terminar la carga a la API; ver también `backend/IA.md` sección 9).
 
-### 10.7 Actualización automática de scripts (`Actualizar_Script.ps1`) [v1.12]
+### 10.7 Actualización automática de scripts (`Actualizar_Script.ps1`) [v1.12; origen GitHub desde 1.13.6]
 
-Cada PC detecta sola una versión nueva publicada en el servidor y la instala, sin reinstalar con `Instalar_Monitor.bat`. Componente independiente y de mejor esfuerzo (P3): un fallo aquí nunca afecta al monitor ni a las cargas. Detalle del servidor: `backend/IA.md` sección 5.2.
+Cada PC detecta sola una versión nueva y la instala, sin reinstalar con `Instalar_Monitor.bat`. Componente independiente y de mejor esfuerzo (P3): un fallo aquí nunca afecta al monitor, al FTP ni a la carga a la API. Detalle del servidor (solo informe de versiones): `backend/IA.md` sección 5.2.
 
-**Publicar (desarrollador).** `backend\tools\Publicar_Actualizacion.ps1` comprueba la sintaxis de todos los `.ps1`, copia los archivos a `backend\api\update\paquete\`, genera `manifest.json` (versión + SHA-256 y tamaño de cada archivo) y lo **firma con RSA-SHA256** (`manifest.sig`). Se sube esa carpeta al servidor junto con `actualizar.php`.
-- **Primera vez:** `Publicar_Actualizacion.ps1 -NuevaClave` crea el par de claves. La **privada** queda en `%USERPROFILE%\.mrv1\update_private.xml` (haga respaldo; nunca va al repositorio ni al servidor) y la **pública** en `sistema\update_pubkey.xml`, que viaja con el paquete.
-- **Cada mejora:** subir el número de versión en `Instalar_Monitor.ps1` (`version = '…'`, es la fuente única) y ejecutar `Publicar_Actualizacion.ps1`.
-- La clave pública la copia `Instalar_Monitor.ps1` a `config\update_pubkey.xml` y **ninguna actualización la reemplaza**: un servidor comprometido no puede mandar código a las PC porque no tiene la clave privada. Sin esa clave en la PC, la actualización automática queda deshabilitada.
-- Si se pierde la clave privada hay que generar un par nuevo y reinstalar a mano las PC (la clave pública instalada no cambia sola).
+**Origen: las etiquetas del repositorio de GitHub (público).** Las PC solo consultan las etiquetas `vX.Y.Z` (protocolo `info/refs` de git, el mismo de `git clone`: no usa la API de GitHub, así que no tiene límite de consultas aunque haya muchas PC detrás de una misma IP). **Una etiqueta nueva = «versión lista para desplegar»**; los commits intermedios no afectan a ninguna PC. Con la etiqueta se descargan de `raw.githubusercontent.com` el manifiesto firmado y los archivos de ese mismo punto del historial. No hay que subir nada a ningún servidor.
+
+**Publicar (desarrollador).** Con todo commiteado y la versión subida en `Instalar_Monitor.ps1` (`version = '…'`, fuente única), ejecutar `backend\tools\Publicar_Actualizacion.bat` (pide administrador, como el resto de scripts de uso manual). El script:
+1. comprueba que los archivos de la actualización están commiteados, que los `.ps1` compilan y que los que tienen acentos llevan BOM;
+2. lee cada archivo **tal como quedó en el commit** y genera `update\manifest.json` (versión, commit, ruta, SHA-256 y tamaño de cada archivo) y `update\manifest.sig`, firma RSA-SHA256 verificada con la clave pública antes de seguir;
+3. pregunta «¿crear la etiqueta vX.Y.Z y subirla a GitHub ahora?»: si se responde **S**, commitea el manifiesto, crea la etiqueta anotada y sube la rama y la etiqueta. Esa etiqueta es el despliegue. Con `-Publicar` no pregunta; con `-OutDir` es una prueba y no etiqueta ni sube nada.
+- **Primera vez:** `Publicar_Actualizacion.ps1 -NuevaClave` crea el par de claves. La **privada** queda en `%USERPROFILE%\.mrv1\update_private.xml` (haga respaldo; nunca va al repositorio) y la **pública** en `sistema\update_pubkey.xml`, que viaja con el paquete.
+- La clave pública la copia `Instalar_Monitor.ps1` a `config\update_pubkey.xml` y **ninguna actualización la reemplaza**: aunque alguien controlara el repositorio o la cuenta de GitHub, no puede mandar código a las PC sin la clave privada. Sin esa clave en la PC, la actualización automática queda deshabilitada.
+- Si se pierde la clave privada hay que generar un par nuevo y reinstalar a mano las PC.
+- Si el repositorio se vuelve privado, o se usa un fork, hay que cambiar `config\update.json` (ver abajo); un repositorio privado necesitaría credenciales en cada PC y no está soportado.
 
 **Flujo en la PC.**
-1. Lee `config\db_api.json` (misma URL y token que la API; deriva `actualizar.php`). Sin API habilitada no se actualiza sola. Solo acepta **HTTPS** (o `localhost` para pruebas).
-2. Descarga el manifiesto y la firma y **verifica la firma**; si no es válida lo ignora y lo registra.
-3. Si la versión publicada es mayor que la de `config\version.json`, descarga **solo los archivos cuyo SHA-256 cambió**, comprueba tamaño y hash, y comprueba que cada `.ps1` compila. Solo acepta nombres de una lista fija de extensiones (`.ps1`, `.html`, `.bat`) y destinos `bin\` o la raíz de `C:\ProgramData\MRV1`.
+1. Pide la lista de etiquetas y toma la **mayor** `vX.Y[.Z]`. Si no es mayor que `config\version.json`, no hace nada.
+2. Descarga `update\manifest.json` y `update\manifest.sig` **de esa etiqueta** y **verifica la firma** con la clave pública instalada; si no es válida lo ignora y lo registra. Comprueba además que la versión del manifiesto es la de la etiqueta.
+3. Descarga **solo los archivos que cambiaron** (compara sin retornos de carro, porque la copia instalada puede tener CRLF y el commit LF), comprueba tamaño y SHA-256 exactos y que cada `.ps1` compila. Solo acepta nombres de una lista fija de extensiones (`.ps1`, `.html`, `.bat`), rutas simples (sin `..`) y destinos `bin\` o la raíz de `C:\ProgramData\MRV1`. Los `.bat` se escriben siempre con CRLF.
 4. Guarda copia de lo que reemplaza en `diag\update_backup\<versión anterior>\` y reemplaza los archivos (el propio `Actualizar_Script.ps1` al final).
 5. Si cambió `Monitor_Red.ps1`, reinicia el monitor con parada ordenada y comprueba que vuelve a escribir `status.json`; **si no arranca, restaura la copia, lo reinicia y deja el resultado `revertida`** (esa versión no se reintenta hasta que se publique otra mayor o se use `-Force`).
-6. Escribe `config\version.json`, informa al servidor (`POST actualizar.php?accion=confirmar`) y guarda el resultado en `diag\update_state.json` y `diag\update.log`.
+6. Escribe `config\version.json` y guarda el resultado en `diag\update_state.json` y `diag\update.log`. Si la API de análisis está habilitada, además informa la versión al servidor (`POST actualizar.php?accion=confirmar`); sin API la actualización funciona igual.
 
-**Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día) y al terminar cada corrida de `Cargador_DB.ps1`; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
+**`config\update.json` (opcional).** `{ "repo": "usuario/repositorio", "refsUrl": "…", "rawBase": "…" }`. Por defecto `elinformaticoni/MRV1`. `refsUrl` y `rawBase` solo hacen falta para un espejo o para pruebas; todo debe ser HTTPS (o `localhost`).
 
-**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.5**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
+**Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día), al terminar cada corrida de `Cargador_DB.ps1` y con el botón «Buscar y actualizar ahora» de la consola web; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
+
+**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.6**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
 
 **Seguimiento [1.13.1].** El resultado de cada consulta queda en `diag\update_state.json`; `Monitor_Red.ps1` lo publica en `status.json` (campo `update`: `result`, `lastCheck`, `remote`, `detail`, releído cada 20 s) y la consola web lo muestra en la tarjeta «Actualización de scripts», con una alerta si la última fue `revertida`, `error`, `firma_invalida` o `manifiesto_invalido`. Además `Actualizar_Script.ps1` informa al servidor la versión instalada y cada fallo (ver `backend/IA.md` 5.2), y `index.php` muestra esa versión junto al nombre de cada máquina.
 
-**Primera vez en las PC:** las PC con una versión anterior a 1.12 no tienen el actualizador ni la clave pública, así que la actualización a 1.12 es la **última reinstalación manual** (`Instalar_Monitor.bat` con el paquete que trae `update_pubkey.xml`). A partir de ahí, las mejoras se publican con `Publicar_Actualizacion.ps1`.
+**Primera vez en las PC:** las PC con una versión anterior a 1.13.6 no tienen el actualizador ni la clave pública, así que la actualización a 1.12 es la **última reinstalación manual** (`Instalar_Monitor.bat` con el paquete que trae `update_pubkey.xml`). A partir de ahí, las mejoras se publican con `Publicar_Actualizacion.ps1`.
 
 **Pendiente:** probar el reinicio y el rollback del monitor en una PC real (las pruebas se hicieron contra un servidor simulado, sin la tarea `MRV1 Monitor`) y mostrar la versión de cada PC en una página del servidor (hoy: `GET actualizar.php?accion=versiones`).
 ---

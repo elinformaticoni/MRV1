@@ -182,6 +182,8 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 
 ## 5.2 Actualización automática de los scripts (`actualizar.php` + `Actualizar_Script.ps1`) [v1.12]
 
+> **[1.13.6] El origen de las actualizaciones pasó a ser GitHub.** Las PC consultan las etiquetas `vX.Y.Z` del repositorio público y descargan el manifiesto firmado y los archivos de esa etiqueta (`update/manifest.json` y `update/manifest.sig` en la raíz del repositorio; ver `sistema/MRV1.11.md` 10.7). Por eso **ya no hay que subir nada a este servidor para publicar**. De este módulo solo se sigue usando `confirmar` y `versiones` (la versión que informa cada PC, que `index.php` y `zombie.php` muestran). Los endpoints `manifiesto`, `firma` y `archivo` y la carpeta `api/update/` (`manifest.*`, `paquete/`) quedaron sin uso y pueden borrarse; el texto de abajo describe el diseño anterior, vigente solo para ellos.
+
 `api/actualizar.php` publica a las PC la versión más reciente de los scripts. **El servidor no firma nada**: la firma RSA-SHA256 del manifiesto se hace en la PC del desarrollador con `tools/Publicar_Actualizacion.ps1` (clave privada en `%USERPROFILE%\.mrv1\update_private.xml`, nunca en el repositorio ni en el servidor). Las PC verifican esa firma con la clave pública que instaló el paquete (`config\update_pubkey.xml`), así que quien comprometa el servidor o el token no puede ejecutar código en las PC.
 
 **Contenido publicado** (`api/update/`, con `.htaccess` `Require all denied`: solo se sirve por `actualizar.php` con token):
