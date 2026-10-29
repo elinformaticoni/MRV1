@@ -2,7 +2,7 @@
 
 **Monitoreo continuo de conectividad para Windows, con historial en CSV, consola web en tiempo real con gráfico de latencia, respaldo por FTP, análisis web de caídas entre varias PC, configuración remota y actualización automática.**
 
-[![Versión](https://img.shields.io/badge/versión-1.13.6-blue)](#)
+[![Versión](https://img.shields.io/badge/versión-1.13.7-blue)](#)
 [![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078D6?logo=windows)](#)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1-5391FE?logo=powershell&logoColor=white)](#)
 [![PHP](https://img.shields.io/badge/backend-PHP%208.3%20%2B%20MySQL-777BB4?logo=php&logoColor=white)](#)
@@ -35,7 +35,7 @@ cd MRV1
 
 > Para desinstalar: `Desinstalar_Monitor.bat` (pregunta si quita también FTP y API). Los registros históricos nunca se borran.
 >
-> Reinstalar solo hace falta una vez por PC con la 1.13.6 o posterior; después las mejoras llegan por **actualización automática**.
+> Reinstalar solo hace falta una vez por PC con la 1.13.7 o posterior; después las mejoras llegan por **actualización automática**.
 
 ## 🚀 Características
 
@@ -100,7 +100,7 @@ GitHub (etiquetas vX.Y.Z + manifiesto firmado) ──► Actualizar_Script.ps1 �
 - **Franja naranja** = 2 o más máquinas caídas a la vez: indica un problema de la red común, no de una estación.
 - Botones **Cable / Wi-Fi** (Wi-Fi oculto por defecto) para no mezclar caídas de señal inalámbrica.
 - Una **barra tenue con la IP** sobre cada máquina: se extiende mientras la IP no cambie y empieza otra cuando cambia.
-- La etiqueta `v1.13.6` junto al nombre de cada máquina es la versión de scripts que confirmó esa PC (ámbar = atrasada, roja = falló su última actualización).
+- La etiqueta `v1.13.7` junto al nombre de cada máquina es la versión de scripts que confirmó esa PC (ámbar = atrasada, roja = falló su última actualización).
 - **Descargar HTML** genera un archivo autocontenido para compartir por correo, con los mismos botones.
 
 **Configuración remota** — en `https://mrv1.solucionesnicaragua.com/zombie.php` (con clave): elige una PC, corrige sus valores guardados y guarda; con **COPIAR A…** aplicas la misma configuración a otros equipos.
@@ -147,7 +147,7 @@ C:\ProgramData\MRV1\
 
 ```text
 FECHA;HORA;TIPO;TIEMPO (s);LATENCIA (ms);MENSAJE
-2026-09-20;07:00:00;INICIO;0;0;LABORATORIO-PC - Profesor1 - Ethernet - 192.168.2.13 - MR V1.13.6
+2026-09-20;07:00:00;INICIO;0;0;LABORATORIO-PC - Profesor1 - Ethernet - 192.168.2.13 - MR V1.13.7
 2026-09-20;07:00:05;OK;252;32;Conectividad disponible [Success]
 2026-09-20;07:04:17;ERROR;45;0;Destino no responde [TimedOut]
 ```
@@ -167,13 +167,13 @@ Un archivo por destino y por día, delimitado por `;`, listo para Excel, PowerSh
 - [`sistema/MRV1.11.md`](./sistema/MRV1.11.md) — guía maestra: arquitectura, decisiones de diseño, consola web, actualización automática, criterios de aceptación.
 - [`backend/IA.md`](./backend/IA.md) y [`backend/README.md`](./backend/README.md) — servidor: base de datos, API, formularios y puesta en marcha.
 
-## 🗺️ Estado actual (1.13.6)
+## 🗺️ Estado actual (1.13.7)
 
 - ✅ Monitor, consola (web y de texto), cargador FTP y cargador API.
 - ✅ API y base de datos en `mrv1.solucionesnicaragua.com`; análisis semanal con coincidencias, filtro Cable/Wi-Fi, barra de IP y reporte HTML.
 - ✅ Configuración remota con edición por PC y «COPIAR A…».
-- ✅ Actualización automática desde etiquetas de GitHub, con firma y retroceso (probada contra un GitHub simulado).
-- ⏳ Reinstalar las PC una vez con la 1.13.6, desplegar `zombie.php`, `actualizar.php` e `index.php` al hosting y publicar la primera etiqueta con manifiesto.
+- ✅ Actualización automática desde etiquetas de GitHub, con firma y retroceso (la etiqueta `v1.13.7` ya está publicada y verificada; el retroceso del monitor falta probarlo en una PC real).
+- ⏳ Reinstalar las PC una vez con la 1.13.7 (o posterior) y desplegar `zombie.php`, `actualizar.php` e `index.php` al hosting.
 - ⏳ Probar el reinicio y el retroceso del monitor en una PC real, la clave de acceso al formulario en producción y varias PC a la vez.
 
 ## 📝 Licencia

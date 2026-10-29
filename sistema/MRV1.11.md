@@ -701,13 +701,15 @@ Cada PC detecta sola una versión nueva y la instala, sin reinstalar con `Instal
 
 **`config\update.json` (opcional).** `{ "repo": "usuario/repositorio", "refsUrl": "…", "rawBase": "…" }`. Por defecto `elinformaticoni/MRV1`. `refsUrl` y `rawBase` solo hacen falta para un espejo o para pruebas; todo debe ser HTTPS (o `localhost`).
 
+**Nota sobre git (`core.autocrlf=true` en Windows).** La firma es sobre los bytes exactos de `manifest.json`; git los convertía al guardarlos y la firma no verificaba (pasó con la `v1.13.6`, que por eso no sirve y se reemplazó por la `v1.13.7`). Ahora el manifiesto se genera con LF, `.gitattributes` lo marca `-text` y `Publicar_Actualizacion.ps1` comprueba, antes de etiquetar, que lo guardado en git es idéntico a lo firmado. Los demás archivos no tienen este problema: el manifiesto lleva el SHA-256 de cada uno tal como quedó en el commit.
+
 **Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día), al terminar cada corrida de `Cargador_DB.ps1` y con el botón «Buscar y actualizar ahora» de la consola web; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
 
-**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.6**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
+**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.7**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
 
 **Seguimiento [1.13.1].** El resultado de cada consulta queda en `diag\update_state.json`; `Monitor_Red.ps1` lo publica en `status.json` (campo `update`: `result`, `lastCheck`, `remote`, `detail`, releído cada 20 s) y la consola web lo muestra en la tarjeta «Actualización de scripts», con una alerta si la última fue `revertida`, `error`, `firma_invalida` o `manifiesto_invalido`. Además `Actualizar_Script.ps1` informa al servidor la versión instalada y cada fallo (ver `backend/IA.md` 5.2), y `index.php` muestra esa versión junto al nombre de cada máquina.
 
-**Primera vez en las PC:** las PC con una versión anterior a 1.13.6 no tienen el actualizador ni la clave pública, así que la actualización a 1.12 es la **última reinstalación manual** (`Instalar_Monitor.bat` con el paquete que trae `update_pubkey.xml`). A partir de ahí, las mejoras se publican con `Publicar_Actualizacion.ps1`.
+**Primera vez en las PC:** las PC con una versión anterior a 1.13.7 no tienen el actualizador ni la clave pública, así que la actualización a 1.12 es la **última reinstalación manual** (`Instalar_Monitor.bat` con el paquete que trae `update_pubkey.xml`). A partir de ahí, las mejoras se publican con `Publicar_Actualizacion.ps1`.
 
 **Pendiente:** probar el reinicio y el rollback del monitor en una PC real (las pruebas se hicieron contra un servidor simulado, sin la tarea `MRV1 Monitor`) y mostrar la versión de cada PC en una página del servidor (hoy: `GET actualizar.php?accion=versiones`).
 ---
