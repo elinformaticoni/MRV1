@@ -36,6 +36,7 @@ $script:Targets    = @()
 $script:User       = '(sin sesión)'
 $script:Net        = @{ Adapters = @{}; Active = $null }
 $script:LastActive = $null
+$script:NetRecheck = $false   # [v1.12] se activa al volver la conectividad: fuerza revisar adaptador/IP sin esperar networkCheckSec
 $script:VersionText = 'MR V1'
 $script:ShutdownOk = $false
 $script:ZombieStateFile = Join-Path $Root 'diag\zombie_state.json'   # [v1.11] config remota
@@ -519,6 +520,7 @@ function Complete-Probe($t, [bool]$ok, [string]$code, [double]$lat, [long]$nowMs
     $t.DiffCount = 0
     if ($newState -eq 'OK') {
         Open-Row $t 'OK' $startWall 'Conectividad restaurada [Success]'
+        $script:NetRecheck = $true   # [v1.12] la conexion volvio: comprobar de inmediato si cambio la IP o el adaptador
     } else {
         Open-Row $t 'ERROR' $startWall (Get-ErrorMessage $t.DiffCode)
     }
@@ -780,7 +782,7 @@ public static class MRShutdown {
 
             foreach ($t in $script:Targets) { Update-Target $t $nowMs }
 
-            if (($nowMs - $lastNetMs) -ge ($netSec * 1000)) { $lastNetMs = $nowMs; Test-NetworkChanges }
+            if ($script:NetRecheck -or (($nowMs - $lastNetMs) -ge ($netSec * 1000))) { $lastNetMs = $nowMs; $script:NetRecheck = $false; Test-NetworkChanges }
             if (($nowMs - $lastUserMs) -ge 30000)           { $lastUserMs = $nowMs; Test-UserChange }
 
             Invoke-Queue

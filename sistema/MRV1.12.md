@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| Versión | MR V1.11 |
+| Versión | MR V1.12 |
+| Cambios en 1.12 | **Dirección IP visible en el análisis semanal:** (1) `Monitor_Red.ps1` comprueba el adaptador y la IP **de inmediato cuando vuelve la conectividad** (cambio confirmado ERROR → OK), sin esperar el siguiente `networkCheckSec`; si cambió, escribe el `EVENTO` habitual («Cambio de dirección IP» / «Cambio de adaptador»). (2) `index.php` dibuja, bajo el nombre de cada máquina y alineada con el eje de hora, una **barra tenue de IP** (solo borde, sin relleno, IP centrada y pequeña): una barra mientras la IP no cambia y una nueva cuando cambia (sección 10.5). Sin cambios de esquema ni de API; la IP se lee de los mensajes `INICIO` y `EVENTO` que ya existían. `version.json` = `1.12`. |
 | Cambios en 1.11 | **Configuración remota** ("zombie", sección 10.6): nuevo componente `Sincronizar_Config.ps1` en la PC del cliente que descarga la instrucción de `zombie.php` (servidor, ya en 1.10), valida rangos, sobrescribe solo las secciones recibidas de `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con parada ordenada si cambian destinos/detección, ajusta la frecuencia de las tareas `MRV1 FTP`/`MRV1 DB` si corresponde, escribe el `EVENTO` de aplicación y confirma la revisión al servidor. Se invoca al terminar `Cargador_DB.ps1` y en cada `INICIO` del monitor; una PC sin la API de análisis habilitada no lo recibe (P3). `status.json` y la consola muestran la revisión aplicada. `version.json` = `1.11`. |
-| Nombre del paquete | `MRV1.11` — el paquete (carpeta/ZIP) y esta guía llevan siempre el mismo nombre y la misma versión, esquema `MRV1.<sub>` (igual que la carpeta de instalación `C:\ProgramData\MRV1`, ver 3.4); la guía viaja **dentro** del paquete, no se entrega suelta. |
+| Nombre del paquete | `MRV1.12` — el paquete (carpeta/ZIP) y esta guía llevan siempre el mismo nombre y la misma versión, esquema `MRV1.<sub>` (igual que la carpeta de instalación `C:\ProgramData\MRV1`, ver 3.4); la guía viaja **dentro** del paquete, no se entrega suelta. |
 | Repositorio | `https://github.com/elinformaticoni/MRV1.git` |
 
 ---
@@ -355,6 +356,7 @@ Además del ping, el monitor detecta, cuando sea posible, cambios relevantes de 
 - Se registra el tipo de adaptador (Wi-Fi o cableado) y, en Wi-Fi, el SSID.
 - Los eventos de red se escriben en el CSV de **todos** los destinos.
 - Frecuencia de revisión: `networkCheckSec` (5 s por defecto).
+- **[v1.12] Revisión inmediata al volver la conexión:** cuando un destino pasa de ERROR a OK (cambio confirmado), el monitor fuerza una revisión de red en ese mismo ciclo en lugar de esperar al siguiente `networkCheckSec`. Así un cambio de IP o de adaptador ocurrido durante la caída (típico al reconectar el cable o el Wi-Fi, o al renovar DHCP) queda registrado como `EVENTO` justo al restablecerse, y la barra de IP del análisis semanal cambia en el momento correcto. Si la IP no cambió no se escribe nada.
 
 ### 5.7 Inicio de sesión y apagado
 
@@ -635,6 +637,7 @@ Resumen:
 - **Recuerda la cabecera [v1.11]:** semana, días, horario, selección de máquinas y las tres casillas de opciones (coincidencias, eventos, días sin registros) se guardan en el navegador (`localStorage`) y se restauran al recargar la página, por PC/navegador — no viaja al servidor ni se comparte entre equipos.
 - **Eliminar computadora [v1.11]:** con sesión iniciada, cada máquina tiene un menú «⋯» con «Eliminar computadora…» — borra esa PC y **todos** sus registros de la base de datos (irreversible, pide confirmación) y retira cualquier instrucción de configuración remota pendiente para ella. Sin clave de acceso configurada en el servidor, la opción no está disponible (la acción exige sesión).
 - **Gráfico:** un bloque por día, una franja por máquina y una fila por destino (varios destinos, uno encima del otro). Verde = conectado con registros (sólido por cable, bandeado con bandas claras por Wi-Fi); rojo = sin conexión; blanco = sin datos; azul = eventos de red e inicios del monitor. A la derecha, el tiempo desconectado dentro del horario y la cantidad de caídas; al final, un resumen de la semana con disponibilidad.
+- **Barra de IP [v1.12]:** bajo el nombre de cada máquina, una fila «IP» alineada con el eje de hora, con una barra de borde tenue y sin relleno por cada tramo de IP, con la dirección centrada en letra pequeña. Si la IP no cambia en el día, una sola barra cubre todo el tiempo con datos; si cambia, la barra termina y empieza otra. La IP sale de los mensajes que ya existen (`INICIO`: `PC - usuario - adaptador - IP - versión`; `EVENTO` de adaptador, con los mismos cinco datos; y `EVENTO` «Cambio de dirección IP: A -> B»), leídos desde el final del texto. La barra se recorta a los tramos con registros (un hueco mayor de 90 s, por ejemplo con la PC apagada, la corta) y no aparece para las máquinas cuyos registros no traen IP. Tooltip: IP, hora de inicio y fin, duración y adaptador. Se incluye en el HTML descargable.
 - **Coincidencias:** franja en ámbar/naranja (deliberadamente distinta del rojo de error) donde 2 o más máquinas distintas están sin conexión al mismo tiempo (tolerancia 5 s) — ayuda a ubicar el problema en la red común.
 - **Filtro por red (Cable / Wi-Fi):** botones dentro del reporte; **ambas redes visibles por defecto**. La red de cada tramo sale del `INICIO` (tercer campo del mensaje) y de los `EVENTO` «Cambio de adaptador» (5.6, 5.7). Los tramos por Wi-Fi se ven bandeados para distinguirlos del cable sin necesidad de ocultarlos.
 - **«✓ Sin caídas»** solo si hay registros de conexión durante todo el horario, sin ningún ERROR.
@@ -751,6 +754,8 @@ Una versión es correcta si cumple como mínimo:
 - [ ] El gráfico muestra un destino por fila, las caídas en rojo y la suma desconectada dentro del horario.
 - [ ] Marca en naranja las caídas simultáneas de 2 o más máquinas.
 - [ ] Los botones Cable / Wi-Fi funcionan en la página y en el HTML descargado.
+- [ ] [v1.12] Cada máquina con IP en sus registros muestra la barra de IP bajo su nombre: una sola barra si la IP no cambió y una barra nueva en cada cambio, también en el HTML descargado.
+- [ ] [v1.12] Al volver la conectividad tras desconectar y reconectar el cable/Wi-Fi con otra IP, el CSV recibe el `EVENTO` de cambio de IP en los segundos siguientes al `OK` de recuperación.
 
 **Configuración remota (si la API está habilitada) [v1.11]**
 - [ ] Sin `config\db_api.json`, `Sincronizar_Config.ps1` no hace ninguna solicitud (P3).
@@ -779,7 +784,7 @@ Una versión es correcta si cumple como mínimo:
 
 ---
 
-## 14. Archivos del paquete (versión 1.11)
+## 14. Archivos del paquete (versión 1.12)
 
 Ver la estructura completa en 3.3. Resumen:
 
@@ -796,7 +801,7 @@ MRV1\                         Raíz del paquete / repositorio (solo lo que usa u
         sql\001_crear_base.sql, sql\002_config_remota.sql [v1.11]
         api\index.php (formulario de análisis [v1.10]), registros.php, zombie.php [v1.11], lib\, config\
     sistema\                   Todo lo demás
-        MRV1.11.md             Esta guía
+        MRV1.12.md             Esta guía
         Monitor_Red.ps1, Monitor_Red_Console.ps1, Cargador_FTP.ps1, Cargador_DB.ps1, Sincronizar_Config.ps1 [v1.11]
         Instalar_Monitor.ps1, Instalar_FTP.ps1 / .bat, Instalar_DB.ps1 / .bat
         Desinstalar_FTP.bat, Desinstalar_DB.bat

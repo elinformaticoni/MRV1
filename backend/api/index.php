@@ -472,6 +472,10 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
 .mr-marca{position:absolute;top:-1px;bottom:-1px;width:2px;margin-left:-1px;z-index:3}
 .mr-marca.ev{background:var(--ev)}
 .mr-marca.ini{background:var(--ini)}
+.mr-ip-fila{min-height:15px;margin-bottom:2px}
+.mr-ip-pista{position:relative;height:14px;box-shadow:none;overflow:visible}
+.mr-ip{position:absolute;top:0;bottom:0;box-sizing:border-box;border:1px solid var(--borde);border-radius:3px;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:10px;line-height:1;color:var(--tenue);white-space:nowrap;font-variant-numeric:tabular-nums;cursor:default}
+.mr-ley i.ipk{height:9px;background:transparent;box-sizing:border-box;border:1px solid var(--borde)}
 .mr-nodata{position:absolute;inset:0;display:flex;align-items:center;padding-left:8px;font-size:11px;color:var(--tenue)}
 .mr-tot{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;padding-left:6px;white-space:nowrap}
 .mr-tot.cero{color:var(--tenue)}
@@ -679,6 +683,52 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     return res.sort(function (x, y) { return x.a - y.a; });
   }
 
+  /* [v1.12] Tramos de dirección IP de una máquina en un día. La IP sale de tres mensajes
+     (se leen desde el final, porque el usuario o el adaptador podrían contener « - »):
+       INICIO                 PC - usuario - adaptador - IP - versión
+       EVENTO adaptador       Cambio de adaptador: A -> B - PC - usuario - adaptador - IP - versión
+       EVENTO dirección IP    Cambio de dirección IP: 192.168.1.20 -> 192.168.1.35
+     Cada tramo dura hasta el siguiente cambio de IP; se recorta a los intervalos con datos
+     (huecos de hasta HUECO_IP s, p. ej. un reinicio del monitor, no cortan la barra). */
+  var HUECO_IP = 90;
+  function esIp(x) {
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(x) || (x.indexOf(':') >= 0 && /^[0-9a-f:.%]+$/i.test(x));
+  }
+  function ipsDia(filasPc, cobertura) {
+    var cambios = [];
+    filasPc.forEach(function (f, n) {
+      var msg = (f[5] || '').replace(/\s*\[INCOMPLETO\]\s*$/, ''), ip = null, ad = null, m;
+      if (f[2] === 'INICIO' || (f[2] === 'EVENTO' && /^Cambio de adaptador:/i.test(msg))) {
+        var p = msg.split(' - ');
+        if (p.length >= 5) { ip = p[p.length - 2].trim(); ad = p[p.length - 3].trim(); }
+      } else if (f[2] === 'EVENTO' && (m = /^Cambio de direcci[oó]n IP:\s*\S+\s*->\s*(\S+)/i.exec(msg))) {
+        ip = m[1];
+      }
+      if (ip && esIp(ip)) cambios.push({ s: secs(f[1]), n: n, ip: ip, ad: ad });
+    });
+    cambios.sort(function (x, y) { return x.s - y.s || x.n - y.n; });
+    var cub = [];
+    unir(cobertura).forEach(function (c) {
+      var u = cub[cub.length - 1];
+      if (u && c.a - u.b <= HUECO_IP) u.b = Math.max(u.b, c.b); else cub.push({ a: c.a, b: c.b });
+    });
+    var tramos = [];
+    cambios.forEach(function (c) {
+      var u = tramos[tramos.length - 1];
+      if (u && u.ip === c.ip) { if (c.ad) u.ad = c.ad; return; }
+      if (u) u.fin = c.s;
+      tramos.push({ ip: c.ip, ad: c.ad || (u && u.ad) || null, ini: c.s, fin: 86400 });
+    });
+    var res = [];
+    tramos.forEach(function (t) {
+      cub.forEach(function (c) {
+        var a = Math.max(t.ini, c.a), b = Math.min(t.fin, c.b);
+        if (b > a) res.push({ a: a, b: b, ip: t.ip, ad: t.ad });
+      });
+    });
+    return res.sort(function (x, y) { return x.a - y.a; });
+  }
+
   function unir(intervalos) {
     var v = intervalos.slice().sort(function (x, y) { return x.a - y.a; }), r = [];
     v.forEach(function (i) {
@@ -715,6 +765,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
           crudos.push({ destino: de.destino, filas: filas, r: r });
         });
         maq.adapt = adaptadoresDia(todas, unir(cobertura));
+        maq.ips = ipsDia(todas, cobertura);
         var completa = crudos.length > 0;
         crudos.forEach(function (c) {
           var piezas = [], err = 0, ok = 0, oculto = 0, cuentan = {}, cubierto = [];
@@ -899,6 +950,23 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
       if (m.completa) nom.appendChild(el('small', 'ok', '✓ sin caídas'));
       bloque.appendChild(nom);
 
+      // [v1.12] Barra de IP: tenue, solo borde, alineada con el eje de hora; una barra por tramo de IP
+      var barrasIp = m.ips.filter(function (t) { return t.b > ini && t.a < fin; });
+      if (barrasIp.length) {
+        var fi = el('div', 'mr-fila mr-ip-fila');
+        fi.appendChild(el('div', 'mr-lbl', 'IP')).title = 'Dirección IP de la máquina en cada momento';
+        var pi = el('div', 'mr-pista mr-ip-pista');
+        barrasIp.forEach(function (t) {
+          var b = el('div', 'mr-ip', t.ip);
+          if (!colocar(b, t.a, t.b, ini, fin)) return;
+          b.setAttribute('data-tip', 'IP ' + t.ip + '\n' + hhmmss(t.a) + ' – ' + hhmmss(t.b) + '  (' + durTexto(t.b - t.a) + ')' + (t.ad ? '\nAdaptador: ' + t.ad : ''));
+          pi.appendChild(b);
+        });
+        fi.appendChild(pi);
+        fi.appendChild(el('div', 'mr-tot'));
+        bloque.appendChild(fi);
+      }
+
       if (!m.destinos.length) {
         var fv = el('div', 'mr-fila'); fv.appendChild(el('div', 'mr-lbl', '—'));
         var pv = pista(ini, fin); pv.appendChild(el('div', 'mr-nodata', 'sin registros')); fv.appendChild(pv);
@@ -1016,6 +1084,7 @@ input[type=date],select{border:1px solid var(--borde);background:var(--panel);bo
     var sd = el('span'), isd = el('i'); isd.style.boxShadow = 'inset 0 0 0 1px var(--borde)'; sd.appendChild(isd); sd.appendChild(document.createTextNode('Sin datos')); l.appendChild(sd);
     if (opc.eventos) { it('var(--ev)', 'Evento de red', 'tk'); it('var(--ini)', 'Inicio del monitor', 'tk'); }
     if (opc.coincidencias) it('var(--coin)', 'Coincidencia (2+ máquinas caídas a la vez)');
+    it('transparent', 'Barra de IP (cambia cuando cambia la dirección)', 'ipk');
     return l;
   }
 

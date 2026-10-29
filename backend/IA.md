@@ -122,6 +122,7 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 - Tooltip de cada tramo: destino, estado, hora inicio–fin, duración, latencia, mensaje y la red que usaba la máquina en ese momento (Wi-Fi/cable, tomado del `INICIO` y de los `EVENTO` «Cambio de adaptador: A -> B»).
 - **Ajuste visual [v1.11]:** ambas redes (Cable/Wi-Fi) visibles por defecto (antes Wi-Fi quedaba oculto), con el tramo por Wi-Fi bandeado (verde con bandas claras) para distinguirlo del cable sin ocultar datos; se subió la opacidad del verde OK (`--ok`/`--ok-wifi`) para que se note con el tramo ya cerrado.
 - Días / máquinas sin caídas en el horario: distintivo «✓ Sin caídas» en la cabecera del día o junto al nombre de la máquina.
+- **Barra de IP [v1.12]:** por máquina y día, bajo su nombre, una fila «IP» alineada con el eje de hora: una barra de borde tenue (sin relleno) por tramo de IP, con la dirección centrada en pequeño; termina y empieza otra cuando la IP cambia. La IP se extrae en el navegador (`ipsDia()` del motor) de `registros.mensaje`: filas `INICIO` y `EVENTO` «Cambio de adaptador» (penúltimo campo al separar por « - »; el último es la versión) y `EVENTO` «Cambio de dirección IP: A -> B» (B). No requiere cambios en la BD ni en la API. Se recorta a los tramos con datos (huecos de más de 90 s la cortan).
 - Columna derecha **«Desconectado»**: suma de `ERROR` cerrados dentro del horario por destino, con la cantidad de caídas. Cabecera del día: caídas y suma total.
 - Al final, **resumen del periodo**: máquina × destino × día seleccionado, total, caídas y disponibilidad (% OK sobre OK+ERROR dentro del horario).
 - La duración de cada estado se toma de `tiempo_s`, limitada al inicio de la fila siguiente (que no sea `EVENTO`); todo se recorta al horario elegido.
@@ -176,7 +177,7 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 
 **Base de datos.** `sql/002_config_remota.sql` agrega `computadoras.config_rev_aplicada` (BIGINT) y `config_aplicada_en` (DATETIME); es idempotente. Sin él, el formulario funciona pero avisa que falta y no muestra la confirmación.
 
-**Comportamiento de la PC (cliente):** implementado en `Sincronizar_Config.ps1` — ver `sistema/MRV1.11.md`, sección 10.6.
+**Comportamiento de la PC (cliente):** implementado en `Sincronizar_Config.ps1` — ver `sistema/MRV1.12.md`, sección 10.6.
 
 ---
 
@@ -229,7 +230,7 @@ El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desin
 
 ## 9. Pendiente
 
-- **[v1.11] Cliente de la configuración remota — listo:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y en cada `INICIO`. Ver `sistema/MRV1.11.md` 10.6. Falta probar con una PC real contra `zombie.php`.
+- **[v1.11] Cliente de la configuración remota — listo:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y en cada `INICIO`. Ver `sistema/MRV1.12.md` 10.6. Falta probar con una PC real contra `zombie.php`.
 - **[v1.11] Desplegar en producción:** ejecutar `sql/002_config_remota.sql`, subir `zombie.php` y `zombie/` (con su `.htaccess`) y tener `reporte.clave` configurada (ya están en el repositorio, solo falta llevarlos al hosting).
 - **Recordatorio — optimizar cuándo se descarga la configuración** (hoy: al terminar la carga a la API y en cada `INICIO`; para una urgencia se pide reiniciar la estación).
 
