@@ -160,7 +160,9 @@ $manifest = [ordered]@{
     commit        = $commit
     files         = $files
 }
-$mbytes = $utf8.GetBytes(($manifest | ConvertTo-Json -Depth 5))
+# Saltos de linea LF y sin conversion de git (ver .gitattributes mas abajo): la firma es sobre estos bytes EXACTOS, y con
+# core.autocrlf=true git guardaba el manifiesto con LF distinto de lo firmado y las PC lo rechazaban.
+$mbytes = $utf8.GetBytes((($manifest | ConvertTo-Json -Depth 5) -replace "`r`n", "`n"))
 if (-not (Test-Path -LiteralPath $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 [System.IO.File]::WriteAllBytes((Join-Path $outDir 'manifest.json'), $mbytes)
 
@@ -190,9 +192,19 @@ if (-not $Publicar) {
     }
 }
 if ((Invoke-Git @('tag', '-l', $tag)).Trim()) { throw ('La etiqueta {0} ya existe: suba el numero de version en Instalar_Monitor.ps1 (y commitee) antes de publicar.' -f $tag) }
-Invoke-Git @('add', '--', 'update') | Out-Null
-$pendiente = (Invoke-Git @('status', '--porcelain', '--', 'update')).Trim()
-if ($pendiente) { Invoke-Git @('commit', '-q', '-m', ('Publicar actualizacion {0}: manifiesto firmado' -f $Version), '--', 'update') | Out-Null }
+# El manifiesto y su firma se guardan tal cual (sin normalizar saltos de linea): si no, la firma no verificaria en las PC.
+$ga = Join-Path $repo '.gitattributes'
+$gaTxt = if (Test-Path -LiteralPath $ga) { [System.IO.File]::ReadAllText($ga) } else { '' }
+foreach ($linea in @('update/manifest.json -text', 'update/manifest.sig -text')) {
+    if ($gaTxt -notmatch [regex]::Escape($linea)) { $gaTxt = $gaTxt.TrimEnd() + "`n" + $linea + "`n" }
+}
+[System.IO.File]::WriteAllText($ga, $gaTxt.TrimStart(), $utf8)
+Invoke-Git @('add', '--', '.gitattributes', 'update') | Out-Null
+$pendiente = (Invoke-Git @('status', '--porcelain', '--', '.gitattributes', 'update')).Trim()
+if ($pendiente) { Invoke-Git @('commit', '-q', '-m', ('Publicar actualizacion {0}: manifiesto firmado' -f $Version), '--', '.gitattributes', 'update') | Out-Null }
+# Comprobacion antes de etiquetar: lo que quedo en el commit debe ser EXACTAMENTE lo que se firmo.
+[byte[]]$enGit = Invoke-Git @('cat-file', 'blob', 'HEAD:update/manifest.json') -Bytes
+if ((Get-Hex $enGit) -ne (Get-Hex $mbytes)) { throw 'El manifiesto guardado en git no es identico al que se firmo (conversion de saltos de linea); no se etiqueta ni se sube.' }
 Invoke-Git @('tag', '-a', $tag, '-m', ('MRV1 ' + $Version)) | Out-Null
 Invoke-Git @('push', 'origin', 'HEAD', $tag) | Out-Null
 Write-Host ('Publicada: etiqueta {0} subida a GitHub. Las PC la tomaran en su proximo ciclo (o con "Buscar y actualizar ahora").' -f $tag) -ForegroundColor Green
