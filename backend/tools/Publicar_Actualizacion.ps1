@@ -1,39 +1,41 @@
 <#
 .SYNOPSIS
-    Monitor de Red (MR) - Publicar_Actualizacion.ps1  [v1.12]
+    Monitor de Red (MR) - Publicar_Actualizacion.ps1  [v1.13.6]
 .DESCRIPTION
-    Herramienta del DESARROLLADOR (no se instala en las PC). Prepara la carpeta backend\api\update\
-    que luego se sube al servidor junto con actualizar.php:
+    Herramienta del DESARROLLADOR (no se instala en las PC). Publica una version para la actualizacion
+    automatica usando GitHub como origen: las PC consultan las ETIQUETAS del repositorio (publico) y,
+    si hay una version mayor, descargan los archivos de esa etiqueta. No hace falta subir nada a ningun servidor.
 
-        update\manifest.json   version + lista de archivos con su SHA-256
-        update\manifest.sig    firma RSA-SHA256 (base64) de manifest.json
-        update\paquete\        los archivos
+    Que hace:
+      1. Comprueba que los archivos de la actualizacion estan commiteados y que los .ps1 compilan y,
+         si tienen acentos, llevan BOM.
+      2. Lee cada archivo tal como quedo en el commit (HEAD) y genera update\manifest.json (version,
+         ruta, SHA-256 y tamano de cada archivo) y update\manifest.sig (firma RSA-SHA256).
+      3. Si se le indica (-Publicar, o respondiendo S a la pregunta), commitea el manifiesto, crea la
+         etiqueta vX.Y.Z y la sube junto con la rama. Esa etiqueta ES el despliegue: las PC la veran.
 
-    Las PC (Actualizar_Script.ps1) verifican esa firma con la clave PUBLICA que se instala con el
-    paquete (config\update_pubkey.xml). La clave PRIVADA nunca se sube ni se guarda en el repositorio:
-    por defecto vive en %USERPROFILE%\.mrv1\update_private.xml. Haga respaldo de ella: si se pierde,
-    hay que generar un par nuevo y reinstalar a mano las PC (la clave publica de las PC no cambia sola).
+    La clave PRIVADA nunca se sube: vive en %USERPROFILE%\.mrv1\update_private.xml (haga respaldo). Las PC
+    verifican la firma con la clave PUBLICA instalada en config\update_pubkey.xml, asi que ni siquiera
+    quien controle el repositorio puede mandar codigo a las PC sin esa clave.
 
     Primera vez:   .\Publicar_Actualizacion.ps1 -NuevaClave      (crea el par y sistema\update_pubkey.xml)
-    Cada mejora:   .\Publicar_Actualizacion.ps1                  (usa la version de Instalar_Monitor.ps1)
-                   .\Publicar_Actualizacion.ps1 -Version 1.13
-
-    Antes de publicar se comprueba la sintaxis de todos los .ps1; si alguno falla no se publica nada.
+    Cada version:  commitear los cambios, subir el numero de version en Instalar_Monitor.ps1 y ejecutar
+                   .\Publicar_Actualizacion.ps1                 (pregunta antes de etiquetar y subir)
 #>
 param(
     [string]$Version,
     [string]$KeyFile = (Join-Path $env:USERPROFILE '.mrv1\update_private.xml'),
-    [string]$OutDir,      # solo para pruebas: carpeta de salida distinta de backend\api\update
+    [string]$OutDir,      # solo para pruebas: carpeta de salida distinta de <repo>\update
     [string]$PubFile,     # solo para pruebas: clave publica distinta de sistema\update_pubkey.xml
     [switch]$NuevaClave,
-    [switch]$Forzar
+    [switch]$Forzar,
+    [switch]$Publicar     # commitea el manifiesto, crea la etiqueta y sube, sin preguntar
 )
 
 $ErrorActionPreference = 'Stop'
 $repo    = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $sistema = Join-Path $repo 'sistema'
-$outDir  = if ($OutDir) { $OutDir } else { Join-Path $repo 'backend\api\update' }
-$paqDir  = Join-Path $outDir 'paquete'
+$outDir  = if ($OutDir) { $OutDir } else { Join-Path $repo 'update' }
 $pubFile = if ($PubFile) { $PubFile } else { Join-Path $sistema 'update_pubkey.xml' }
 $utf8    = New-Object System.Text.UTF8Encoding($false)
 
@@ -67,6 +69,27 @@ function Find-Source([string]$name) {
     return $null
 }
 
+# Ejecuta git y devuelve la salida como TEXTO (lineas) o, con -Bytes, como bytes exactos (sin que PowerShell los toque).
+function Invoke-Git([string[]]$GitArgs, [switch]$Bytes, [switch]$AllowFail) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'git'
+    $psi.WorkingDirectory = $repo
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = $utf8
+    $psi.Arguments = (($GitArgs | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $ms = New-Object System.IO.MemoryStream
+    $errTask = $p.StandardError.ReadToEndAsync()
+    $p.StandardOutput.BaseStream.CopyTo($ms)
+    $p.WaitForExit()
+    $err = $errTask.Result
+    if ($p.ExitCode -ne 0 -and -not $AllowFail) { throw ('git {0} fallo: {1}' -f ($GitArgs -join ' '), $err.Trim()) }
+    if ($Bytes) { return , $ms.ToArray() }
+    return $utf8.GetString($ms.ToArray())
+}
+
 # ---- Clave
 if ($NuevaClave) {
     if ((Test-Path -LiteralPath $KeyFile) -and -not $Forzar) {
@@ -92,46 +115,52 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     else { throw 'No se pudo leer la version de Instalar_Monitor.ps1; indiquela con -Version.' }
 }
 if ($Version -notmatch '^\d+(\.\d+){1,3}$') { throw ('Version invalida: {0}' -f $Version) }
+$tag = 'v' + $Version
 
-# ---- Comprobaciones previas: todo existe y los .ps1 compilan
+# ---- Comprobaciones previas: todo existe, esta commiteado, los .ps1 compilan y los acentos llevan BOM
 $lista = @()
 foreach ($a in $archivos) {
     $src = Find-Source $a.n
     if (-not $src) { throw ('No se encontro {0} (se busco en sistema\ y en la raiz del repositorio).' -f $a.n) }
-    if ($a.n -like '*.ps1') {
+    $rel = ($src.Substring($repo.Length).TrimStart('\', '/')) -replace '\\', '/'
+    $lista += @{ n = $a.n; d = $a.d; src = $src; rel = $rel }
+}
+$sucios = (Invoke-Git (@('status', '--porcelain', '--') + @($lista | ForEach-Object { $_.rel })) ).Trim()
+if ($sucios) { throw ("Hay cambios sin commitear en archivos de la actualizacion; haga commit primero (la actualizacion se publica desde lo commiteado):`n{0}" -f $sucios) }
+$noRastreados = @($lista | Where-Object { (Invoke-Git @('ls-files', '--error-unmatch', '--', $_.rel) -AllowFail).Trim() -eq '' })
+if ($noRastreados.Count) { throw ('Estos archivos no estan en git: {0}' -f (($noRastreados | ForEach-Object { $_.rel }) -join ', ')) }
+
+$files = @()
+$sha = [System.Security.Cryptography.SHA256]::Create()
+function Get-Hex([byte[]]$b) { return ([System.BitConverter]::ToString($sha.ComputeHash($b)) -replace '-', '').ToLowerInvariant() }
+foreach ($x in $lista) {
+    [byte[]]$blob = Invoke-Git @('cat-file', 'blob', ('HEAD:' + $x.rel)) -Bytes
+    if ($x.n -like '*.ps1') {
+        $text = $utf8.GetString($blob)
         $err = $null; $tok = $null
-        [System.Management.Automation.Language.Parser]::ParseFile($src, [ref]$tok, [ref]$err) | Out-Null
-        if ($err -and $err.Count) { throw ('Error de sintaxis en {0} (linea {1}): {2}' -f $a.n, $err[0].Extent.StartLineNumber, $err[0].Message) }
-        # Windows PowerShell 5.1 lee como ANSI un .ps1 sin BOM: los acentos saldrian rotos (ConfiguraciÃ³n) en CSV y logs.
-        $raw = [System.IO.File]::ReadAllBytes($src)
-        $tieneBom = ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF)
-        if ((-not $tieneBom) -and ($raw | Where-Object { $_ -gt 127 } | Select-Object -First 1)) {
-            throw ('{0} tiene caracteres no ASCII pero no esta guardado como UTF-8 con BOM; los acentos se verian mal. Guardelo con BOM.' -f $a.n)
+        [System.Management.Automation.Language.Parser]::ParseInput($text.TrimStart([char]0xFEFF), [ref]$tok, [ref]$err) | Out-Null
+        if ($err -and $err.Count) { throw ('Error de sintaxis en {0} (linea {1}): {2}' -f $x.n, $err[0].Extent.StartLineNumber, $err[0].Message) }
+        $tieneBom = ($blob.Length -ge 3 -and $blob[0] -eq 0xEF -and $blob[1] -eq 0xBB -and $blob[2] -eq 0xBF)
+        if ((-not $tieneBom) -and ($blob | Where-Object { $_ -gt 127 } | Select-Object -First 1)) {
+            throw ('{0} tiene caracteres no ASCII pero no esta guardado como UTF-8 con BOM; los acentos se verian mal. Guardelo con BOM.' -f $x.n)
         }
     }
-    $lista += @{ n = $a.n; d = $a.d; src = $src }
+    # sha256 = bytes exactos del commit (lo que descarga la PC); sha256lf = sin retornos de carro (para comparar con la copia
+    # instalada, que en Windows puede tener CRLF).
+    $sinCr = New-Object System.Collections.Generic.List[byte]
+    foreach ($bt in $blob) { if ($bt -ne 13) { $sinCr.Add($bt) } }
+    $files += [ordered]@{ name = $x.n; dest = $x.d; path = $x.rel; sha256 = (Get-Hex $blob); sha256lf = (Get-Hex $sinCr.ToArray()); size = $blob.Length }
 }
-
-# ---- Paquete
-if (Test-Path -LiteralPath $paqDir) { Remove-Item -LiteralPath $paqDir -Recurse -Force }
-New-Item -ItemType Directory -Path $paqDir -Force | Out-Null
-$sha = [System.Security.Cryptography.SHA256]::Create()
-$files = @()
-foreach ($x in $lista) {
-    $dst = Join-Path $paqDir $x.n
-    Copy-Item -LiteralPath $x.src -Destination $dst -Force
-    $bytes = [System.IO.File]::ReadAllBytes($dst)
-    $hash = ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant()
-    $files += [ordered]@{ name = $x.n; dest = $x.d; sha256 = $hash; size = $bytes.Length }
-}
+$commit = (Invoke-Git @('rev-parse', 'HEAD')).Trim()
 $manifest = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     version       = $Version
     generado      = (Get-Date).ToString('s')
+    commit        = $commit
     files         = $files
 }
-$mjson = $manifest | ConvertTo-Json -Depth 5
-$mbytes = $utf8.GetBytes($mjson)
+$mbytes = $utf8.GetBytes(($manifest | ConvertTo-Json -Depth 5))
+if (-not (Test-Path -LiteralPath $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
 [System.IO.File]::WriteAllBytes((Join-Path $outDir 'manifest.json'), $mbytes)
 
 # ---- Firma (se verifica con la publica antes de dar el trabajo por bueno)
@@ -141,7 +170,6 @@ try {
     $sig = $rsa.SignData($mbytes, 'SHA256')
 } finally { $rsa.Dispose() }
 [System.IO.File]::WriteAllText((Join-Path $outDir 'manifest.sig'), [Convert]::ToBase64String($sig), $utf8)
-
 $pub = New-Object System.Security.Cryptography.RSACryptoServiceProvider
 try {
     $pub.FromXmlString([System.IO.File]::ReadAllText($pubFile, $utf8))
@@ -149,6 +177,21 @@ try {
 } finally { $pub.Dispose() }
 
 Write-Host ''
-Write-Host ('Actualizacion {0} preparada: {1} archivos, firma verificada.' -f $Version, $files.Count) -ForegroundColor Green
-Write-Host ('Suba al servidor la carpeta: {0}' -f $outDir)
-Write-Host '  (junto con actualizar.php, y .htaccess dentro de update\ si todavia no esta). Las PC la aplican solas en su proximo ciclo.'
+Write-Host ('Version {0}: manifiesto de {1} archivos generado desde el commit {2} y firmado (firma verificada).' -f $Version, $files.Count, $commit.Substring(0, 7)) -ForegroundColor Green
+
+# ---- Etiquetar y subir (solo con la carpeta de salida normal; con -OutDir es una prueba)
+if ($OutDir) { Write-Host ('Prueba: salida en {0}; no se etiqueta ni se sube nada.' -f $outDir); return }
+if (-not $Publicar) {
+    $r = Read-Host ("Crear la etiqueta {0} y subirla a GitHub AHORA (las PC la aplicaran en su proximo ciclo)? [S/N]" -f $tag)
+    if ($r -notmatch '^[sS]') {
+        Write-Host ('No se publico nada. Para hacerlo mas tarde: git add update; git commit; git tag -a {0} -m "MRV1 {1}"; git push origin main --follow-tags' -f $tag, $Version)
+        return
+    }
+}
+if ((Invoke-Git @('tag', '-l', $tag)).Trim()) { throw ('La etiqueta {0} ya existe: suba el numero de version en Instalar_Monitor.ps1 (y commitee) antes de publicar.' -f $tag) }
+Invoke-Git @('add', '--', 'update') | Out-Null
+$pendiente = (Invoke-Git @('status', '--porcelain', '--', 'update')).Trim()
+if ($pendiente) { Invoke-Git @('commit', '-q', '-m', ('Publicar actualizacion {0}: manifiesto firmado' -f $Version), '--', 'update') | Out-Null }
+Invoke-Git @('tag', '-a', $tag, '-m', ('MRV1 ' + $Version)) | Out-Null
+Invoke-Git @('push', 'origin', 'HEAD', $tag) | Out-Null
+Write-Host ('Publicada: etiqueta {0} subida a GitHub. Las PC la tomaran en su proximo ciclo (o con "Buscar y actualizar ahora").' -f $tag) -ForegroundColor Green

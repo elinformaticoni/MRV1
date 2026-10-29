@@ -1,14 +1,16 @@
 <#
 .SYNOPSIS
-    Monitor de Red (MR) - Actualizar_Script.ps1  [v1.12]
+    Monitor de Red (MR) - Actualizar_Script.ps1  [v1.13.6]
 .DESCRIPTION
     Actualizacion automatica de los scripts (ver MRV1.11.md seccion 10.7 y backend/IA.md 5.2).
     Componente independiente y de mejor esfuerzo (mismo principio P3 que Sincronizar_Config.ps1):
     un fallo aqui nunca debe afectar al monitor, al FTP ni a la carga a la API.
 
-    Cuando el servidor publica una version mayor que la instalada, este script:
-      1. Descarga manifest.json y manifest.sig y VERIFICA la firma RSA-SHA256 con la clave publica
-         instalada (config\update_pubkey.xml). Sin clave publica o con firma invalida: no hace nada.
+    El origen es el repositorio de GitHub (publico): solo se consultan las ETIQUETAS vX.Y.Z. Una etiqueta
+    nueva significa "version lista para desplegar"; los commits intermedios no afectan a las PC.
+    Cuando hay una etiqueta mayor que la version instalada, este script:
+      1. Descarga update\manifest.json y update\manifest.sig DE ESA ETIQUETA y VERIFICA la firma RSA-SHA256 con
+         la clave publica instalada (config\update_pubkey.xml). Sin clave publica o con firma invalida: no hace nada.
       2. Descarga solo los archivos que cambiaron y comprueba tamano y SHA-256 de cada uno.
       3. Comprueba que todos los .ps1 compilan (no se instala nada que no se pueda ejecutar).
       4. Guarda copia de lo que va a reemplazar (diag\update_backup\) y reemplaza los archivos.
@@ -22,7 +24,8 @@
 
     Se invoca, en un proceso aparte y oculto: en cada INICIO del monitor (arranque y cambio de dia)
     y al terminar cada corrida de Cargador_DB.ps1. Con -Force salta el limite de una consulta cada 30 min.
-    Usa la URL y el token de config\db_api.json: una PC sin la API habilitada no se actualiza sola.
+    No necesita la API de analisis: si esta habilitada (config\db_api.json), ademas informa al servidor la version
+    instalada y los fallos. config\update.json (opcional) permite cambiar repo, refsUrl y rawBase.
 #>
 param([string]$Root, [switch]$Force)
 
@@ -107,12 +110,49 @@ function Get-FileSha256([string]$path) {
 # ---------------------------------------------------------------------------------------------
 # Red
 # ---------------------------------------------------------------------------------------------
+function Get-BytesSha256([byte[]]$bytes) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+# SHA-256 sin retornos de carro (13): la copia instalada puede tener CRLF y el commit LF, y deben contar como iguales.
+function Get-FileSha256Lf([string]$path) {
+    $src = [System.IO.File]::ReadAllBytes($path)
+    $l = New-Object System.Collections.Generic.List[byte]
+    foreach ($b in $src) { if ($b -ne 13) { $l.Add($b) } }
+    return (Get-BytesSha256 $l.ToArray())
+}
+# Convierte los saltos de linea a CRLF (los .bat con solo LF pueden fallar en cmd).
+function ConvertTo-CrLf([byte[]]$src) {
+    $l = New-Object System.Collections.Generic.List[byte]
+    foreach ($b in $src) {
+        if ($b -eq 13) { continue }
+        if ($b -eq 10) { $l.Add(13) }
+        $l.Add($b)
+    }
+    return , $l.ToArray()
+}
+# Version mas alta entre las etiquetas vX.Y[.Z[.W]] del repositorio, leyendo el protocolo "smart HTTP" de git
+# (info/refs): es el mismo que usa git clone, no pasa por la API de GitHub y por eso no tiene limite de consultas.
+function Get-LatestTag([string]$refsUrl) {
+    $r = Invoke-WebRequest -Uri $refsUrl -Headers @{ 'User-Agent' = 'git/2.43.0' } -TimeoutSec 30 -UseBasicParsing
+    $txt = [System.Text.Encoding]::ASCII.GetString($r.RawContentStream.ToArray())
+    $best = $null
+    foreach ($m in [regex]::Matches($txt, 'refs/tags/v(\d+(?:\.\d+){1,3})(?=[\^\x00\r\n]|$)')) {
+        $v = $m.Groups[1].Value
+        if ((-not $best) -or ([version]$v -gt [version]$best)) { $best = $v }
+    }
+    return $best
+}
 function Get-Bytes([string]$url, [string]$token) {
-    $r = Invoke-WebRequest -Uri $url -Method Get -Headers @{ 'X-MR-Token' = $token } -TimeoutSec 30 -UseBasicParsing
-    return $r.RawContentStream.ToArray()
+    $h = @{ 'User-Agent' = 'MRV1-Actualizador' }
+    if ($token) { $h['X-MR-Token'] = $token }
+    $r = Invoke-WebRequest -Uri $url -Method Get -Headers $h -TimeoutSec 30 -UseBasicParsing
+    return , $r.RawContentStream.ToArray()
 }
 
 function Send-Confirm([string]$baseUrl, [string]$token, [string]$version, [bool]$ok, [string]$detalle, [string]$resultado = '') {
+    if ([string]::IsNullOrEmpty($baseUrl)) { return }   # sin API habilitada no hay a quien informar (la actualizacion no depende de eso)
     try {
         $body = [ordered]@{ pc = $pc; version = $version; ok = $ok; resultado = $resultado; detalle = $detalle } | ConvertTo-Json -Compress
         Invoke-WebRequest -Uri ($baseUrl + '?accion=confirmar') -Method Post -Headers @{ 'X-MR-Token' = $token } `
@@ -124,6 +164,7 @@ function Send-Confirm([string]$baseUrl, [string]$token, [string]$version, [bool]
 # Informa al servidor la version instalada y el resultado de esta corrida, sin repetirse: solo si cambio la
 # version o el resultado, o como maximo una vez al dia (asi index.php ve la version aunque nunca haya cambiado).
 function Send-ReportIfDue([string]$baseUrl, [string]$token, [string]$resultado, [bool]$ok, [string]$detalle) {
+    if ([string]::IsNullOrEmpty($baseUrl)) { return }
     try {
         $v = Get-LocalVersion
         $s = Read-JsonFile $stateFile
@@ -210,18 +251,35 @@ try {
     }
     if (-not $Force) { Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum 20) }   # no coincidir con la sincronizacion de configuracion
 
-    # --- Requisitos
-    $db =Read-JsonFile (Join-Path $cfgDir 'db_api.json')
-    if ($null -eq $db -or [string]::IsNullOrWhiteSpace([string]$db.apiUrl) -or [string]::IsNullOrWhiteSpace([string]$db.token)) {
-        Write-Log 'db_api.json incompleto (falta apiUrl o token); no se puede consultar actualizaciones.'; exit 0
+    # --- Origen: etiquetas del repositorio de GitHub (publico). config\update.json es opcional: repo, refsUrl y rawBase
+    # permiten usar un fork o un servidor de prueba. Solo HTTPS (o localhost).
+    $uc = Read-JsonFile (Join-Path $cfgDir 'update.json')
+    $repoName = 'elinformaticoni/MRV1'
+    if ($uc -and $uc.repo -and ([string]$uc.repo -match '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$')) { $repoName = [string]$uc.repo }
+    $refsUrl = 'https://github.com/{0}.git/info/refs?service=git-upload-pack' -f $repoName
+    $rawBase = 'https://raw.githubusercontent.com/{0}' -f $repoName
+    if ($uc -and $uc.refsUrl) { $refsUrl = [string]$uc.refsUrl }
+    if ($uc -and $uc.rawBase) { $rawBase = ([string]$uc.rawBase).TrimEnd('/') }
+    foreach ($ux in @($refsUrl, $rawBase)) {
+        $uu = $null
+        try { $uu = [Uri]$ux } catch { }
+        if (-not $uu -or (($uu.Scheme -ne 'https') -and ($uu.Host -ne 'localhost') -and ($uu.Host -ne '127.0.0.1'))) {
+            Write-Log ('Se rechaza el origen {0}: la actualizacion automatica exige HTTPS.' -f $ux); exit 0
+        }
     }
-    $token = [string]$db.token
-    $baseUrl = $null
-    try { $baseUrl = [Uri]::new([Uri]$db.apiUrl, 'actualizar.php').AbsoluteUri } catch { }
-    if (-not $baseUrl) { Write-Log ('No se pudo derivar la URL de actualizar.php a partir de "{0}".' -f $db.apiUrl); exit 0 }
-    $u = [Uri]$baseUrl
-    $esLocal = ($u.Host -eq 'localhost') -or ($u.Host -eq '127.0.0.1')
-    if (($u.Scheme -ne 'https') -and -not $esLocal) { Write-Log ('Se rechaza {0}: la actualizacion automatica exige HTTPS.' -f $baseUrl); exit 0 }
+
+    # --- Informe de version al servidor (opcional): solo si la API de analisis esta habilitada en esta PC.
+    $token = ''; $baseUrl = $null
+    $db = Read-JsonFile (Join-Path $cfgDir 'db_api.json')
+    if ($db -and -not [string]::IsNullOrWhiteSpace([string]$db.apiUrl) -and -not [string]::IsNullOrWhiteSpace([string]$db.token)) {
+        try {
+            $baseUrl = [Uri]::new([Uri]$db.apiUrl, 'actualizar.php').AbsoluteUri
+            $token = [string]$db.token
+            $ub = [Uri]$baseUrl
+            if (($ub.Scheme -ne 'https') -and ($ub.Host -ne 'localhost') -and ($ub.Host -ne '127.0.0.1')) { $baseUrl = $null }
+        } catch { $baseUrl = $null }
+    }
+
     if (-not (Test-Path -LiteralPath $pubFile)) {
         $msg = 'Sin config\update_pubkey.xml: la actualizacion automatica esta deshabilitada en esta PC (reinstale con el paquete 1.12 o superior).'
         Write-Log $msg; Save-State 'sin_clave' '' $msg
@@ -229,15 +287,25 @@ try {
         exit 0
     }
 
-    # --- Manifiesto firmado
+    # --- Etiqueta mas reciente (vX.Y.Z): lo unico que se consulta para saber si hay version nueva
+    $local = Get-LocalVersion
+    $remota = $null
+    try { $remota = Get-LatestTag $refsUrl }
+    catch { Write-Log ('No se pudo consultar las etiquetas del repositorio: ' + $_.Exception.Message); exit 0 }
+    if (-not $remota) { Save-State 'al_dia' '' 'El repositorio no tiene ninguna version etiquetada.'; Send-ReportIfDue $baseUrl $token 'al_dia' $true 'Sin version etiquetada.'; exit 0 }
+    if ([version]$remota -le [version]$local) { Save-State 'al_dia' $remota 'Sin cambios.'; Send-ReportIfDue $baseUrl $token 'al_dia' $true 'Sin cambios.'; exit 0 }
+    # Una version que ya se intento y fue revertida no se reintenta en cada ciclo (solo con -Force o cuando se publique otra mayor).
+    if (-not $Force -and $prev -and ($prev.resultado -eq 'revertida') -and ([string]$prev.versionRemota -eq $remota)) { exit 0 }
+
+    # --- Manifiesto firmado de esa etiqueta
+    $tagName = 'v' + $remota
     $mbytes = $null; $sigTxt = $null
     try {
-        $mbytes = Get-Bytes ($baseUrl + '?accion=manifiesto') $token
-        $sigTxt = $utf8.GetString((Get-Bytes ($baseUrl + '?accion=firma') $token)).Trim()
+        $mbytes = Get-Bytes ('{0}/{1}/update/manifest.json' -f $rawBase, $tagName) ''
+        $sigTxt = $utf8.GetString((Get-Bytes ('{0}/{1}/update/manifest.sig' -f $rawBase, $tagName) '')).Trim()
     } catch {
-        $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
-        if ($code -eq 404) { Save-State 'al_dia' '' 'El servidor no tiene ninguna actualizacion publicada.'; Send-ReportIfDue $baseUrl $token 'al_dia' $true 'Sin actualizacion publicada.' }
-        else { Write-Log ('No se pudo consultar el manifiesto: ' + $_.Exception.Message) }
+        $dm = 'No se pudo descargar el manifiesto de la etiqueta {0}: {1}' -f $tagName, $_.Exception.Message
+        Write-Log $dm; Save-State 'error' $remota $dm; Send-ReportIfDue $baseUrl $token 'error' $false $dm
         exit 0
     }
     $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
@@ -247,46 +315,48 @@ try {
         $firmaOk = $rsa.VerifyData($mbytes, 'SHA256', [Convert]::FromBase64String($sigTxt))
     } catch { $firmaOk = $false } finally { $rsa.Dispose() }
     if (-not $firmaOk) {
-        Write-Log 'FIRMA INVALIDA del manifiesto: se ignora la actualizacion.'
-        Save-State 'firma_invalida' '' 'La firma del manifiesto no es valida; no se aplico nada.'
+        Write-Log ('FIRMA INVALIDA del manifiesto de {0}: se ignora la actualizacion.' -f $tagName)
+        Save-State 'firma_invalida' $remota 'La firma del manifiesto no es valida; no se aplico nada.'
         Send-ReportIfDue $baseUrl $token 'firma_invalida' $false 'La firma del manifiesto no es valida; no se aplico nada.'
         exit 0
     }
 
     $m = $utf8.GetString($mbytes) | ConvertFrom-Json
-    if ($m.schemaVersion -ne 1 -or ([string]$m.version -notmatch '^\d+(\.\d+){1,3}$')) { Write-Log 'Manifiesto con formato no reconocido.'; exit 0 }
-    $remota = [string]$m.version
-    $local = Get-LocalVersion
-    if ([version]$remota -le [version]$local) { Save-State 'al_dia' $remota 'Sin cambios.'; Send-ReportIfDue $baseUrl $token 'al_dia' $true 'Sin cambios.'; exit 0 }
-    # Una version que ya se intento y fue revertida no se reintenta en cada ciclo (solo con -Force o cuando se publique otra mayor).
-    if (-not $Force -and $prev -and ($prev.resultado -eq 'revertida') -and ([string]$prev.versionRemota -eq $remota)) { exit 0 }
+    if ($m.schemaVersion -ne 2 -or ([string]$m.version -ne $remota)) {
+        $dm = 'Manifiesto con formato no reconocido o de otra version que la etiqueta {0}.' -f $tagName
+        Write-Log $dm; Save-State 'manifiesto_invalido' $remota $dm; Send-ReportIfDue $baseUrl $token 'manifiesto_invalido' $false $dm; exit 0
+    }
 
-    # --- Validar la lista de archivos (nombres y destinos permitidos)
+    # --- Validar la lista de archivos (nombres, rutas y destinos permitidos)
     $files = @($m.files)
-    if (($files.Count -eq 0) -or ($files.Count -gt $MAX_ARCHIVOS)) { Write-Log 'Manifiesto con lista de archivos invalida.'; exit 0 }
+    if (($files.Count -eq 0) -or ($files.Count -gt $MAX_ARCHIVOS)) { Write-Log 'Manifiesto con lista de archivos invalida.'; Save-State 'manifiesto_invalido' $remota 'Lista de archivos invalida.'; exit 0 }
     foreach ($f in $files) {
         $ext = ([System.IO.Path]::GetExtension([string]$f.name)).ToLowerInvariant()
+        $ruta = [string]$f.path
         if (([string]$f.name -notmatch '^[A-Za-z0-9_.-]{1,80}$') -or ($EXT_OK -notcontains $ext) -or (@('bin', 'root') -notcontains [string]$f.dest) `
-            -or ([string]$f.sha256 -notmatch '^[0-9a-f]{64}$') -or ([int64]$f.size -le 0) -or ([int64]$f.size -gt $MAX_BYTES)) {
+            -or ($ruta -notmatch '^[A-Za-z0-9_./-]{1,120}$') -or $ruta.Contains('..') -or $ruta.StartsWith('/') `
+            -or ([string]$f.sha256 -notmatch '^[0-9a-f]{64}$') -or ([string]$f.sha256lf -notmatch '^[0-9a-f]{64}$') -or ([int64]$f.size -le 0) -or ([int64]$f.size -gt $MAX_BYTES)) {
             Write-Log ('Entrada de manifiesto rechazada: {0}' -f $f.name); Save-State 'manifiesto_invalido' $remota ('Entrada rechazada: ' + $f.name); Send-ReportIfDue $baseUrl $token 'manifiesto_invalido' $false ('Entrada rechazada: ' + $f.name); exit 0
         }
     }
 
     Write-Log ('Actualizacion disponible: {0} -> {1}' -f $local, $remota)
 
-    # --- Descarga y verificacion (solo lo que cambio)
+    # --- Descarga y verificacion (solo lo que cambio; se compara sin retornos de carro porque la copia instalada puede tener CRLF)
     $stage = Join-Path $tmpRoot $remota
     if (Test-Path -LiteralPath $tmpRoot) { Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     $cambios = @()
     foreach ($f in $files) {
         $dest = Get-TargetPath ([string]$f.dest) ([string]$f.name)
-        if ((Test-Path -LiteralPath $dest) -and ((Get-FileSha256 $dest) -eq [string]$f.sha256)) { continue }
+        if ((Test-Path -LiteralPath $dest) -and ((Get-FileSha256Lf $dest) -eq [string]$f.sha256lf)) { continue }
         $tmp = Join-Path $stage ([string]$f.name)
-        [System.IO.File]::WriteAllBytes($tmp, (Get-Bytes ('{0}?accion=archivo&nombre={1}' -f $baseUrl, [Uri]::EscapeDataString([string]$f.name)) $token))
-        if (((Get-Item -LiteralPath $tmp).Length -ne [int64]$f.size) -or ((Get-FileSha256 $tmp) -ne [string]$f.sha256)) {
+        [byte[]]$datos = Get-Bytes ('{0}/{1}/{2}' -f $rawBase, $tagName, [string]$f.path) ''
+        if (($datos.Length -ne [int64]$f.size) -or ((Get-BytesSha256 $datos) -ne [string]$f.sha256)) {
             throw ('El archivo descargado {0} no coincide con el manifiesto (tamano/SHA-256).' -f $f.name)
         }
+        if ([System.IO.Path]::GetExtension($tmp).ToLowerInvariant() -eq '.bat') { $datos = ConvertTo-CrLf $datos }   # un .bat con solo LF falla en cmd
+        [System.IO.File]::WriteAllBytes($tmp, $datos)
         if ([System.IO.Path]::GetExtension($tmp).ToLowerInvariant() -eq '.ps1') {
             $err = $null; $tok = $null
             [System.Management.Automation.Language.Parser]::ParseFile($tmp, [ref]$tok, [ref]$err) | Out-Null
