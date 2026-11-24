@@ -272,8 +272,10 @@ function mr_eliminar_pc(PDO $pdo, string $pc): array
 /**
  * Deja para la PC una instrucción de configuración remota (la misma que lee zombie.php y descarga
  * Sincronizar_Config.ps1) con el campo "alias": la PC lo escribe en config\monitor.json y lo manda
- * en sus próximos envíos. Si ya había una instrucción SIN aplicar, conserva sus secciones para no
- * perderla; si ya estaba aplicada, la deja solo con el alias (así la PC no repite cambios ni se reinicia).
+ * en sus próximos envíos. Conserva SIEMPRE las secciones que ya tuviera la instrucción (destinos,
+ * detección, API, FTP): son lo que el formulario de zombie.php muestra como configuración de esa PC, y
+ * descartarlas lo dejaba con valores por defecto. El cliente (1.13.8 o posterior) ignora las secciones que
+ * la PC ya tiene tal cual, así que repetirlas no reinicia el monitor ni cambia nada.
  * Devuelve false si el nombre de la PC no sirve como nombre de archivo.
  */
 function mr_nombre_instruir(PDO $pdo, string $pc, string $nombre): bool
@@ -289,19 +291,9 @@ function mr_nombre_instruir(PDO $pdo, string $pc, string $nombre): bool
     }
     $secciones = [];
     if ($ant !== null) {
-        $aplicada = false;
-        try {
-            $st = $pdo->prepare('SELECT config_rev_aplicada FROM computadoras WHERE pc = ?');
-            $st->execute([$pc]);
-            $aplicada = (int) $st->fetchColumn() >= (int) ($ant['revision'] ?? 0);
-        } catch (Throwable $e) {
-            // Sin la columna (falta sql/002) no se sabe: se conservan las secciones por prudencia.
-        }
-        if (!$aplicada) {
-            foreach (['targets', 'detection', 'db', 'ftp'] as $k) {
-                if (isset($ant[$k])) {
-                    $secciones[$k] = $ant[$k];
-                }
+        foreach (['targets', 'detection', 'db', 'ftp'] as $k) {
+            if (isset($ant[$k])) {
+                $secciones[$k] = $ant[$k];
             }
         }
     }

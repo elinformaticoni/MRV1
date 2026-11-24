@@ -367,10 +367,26 @@ try {
                 if ($instr.detection.networkCheckSec) { $det.networkCheckSec = [int]$instr.detection.networkCheckSec }
             }
             $obj.detection = $det
-            Write-JsonFile $monitorPath $obj
+            # [v1.13.8] La instruccion puede traer secciones que la PC ya tiene tal cual (el panel las conserva al cambiar
+            # el nombre del equipo). Solo si algo cambia de verdad se escribe el archivo y se reinicia el monitor.
+            function Get-TextoDestinos($lista) {
+                return ((@($lista) | ForEach-Object { '{0}|{1}|{2}' -f [string]$_.address, $(if ($_.intervalSec) { [int]$_.intervalSec } else { 5 }), $(if ($_.confirmPings) { [int]$_.confirmPings } else { 1 }) }) -join ';')
+            }
+            $destinosCambian = $false
+            if ($targetsNuevos) { $destinosCambian = ((Get-TextoDestinos $targetsNuevos) -ne (Get-TextoDestinos $mc.targets)) }
+            $deteccionCambia = $false
+            if ($instr.detection) {
+                $actT = 2000; $actN = 5
+                if ($mc.detection) {
+                    if ($mc.detection.timeoutMs)       { $actT = [int]$mc.detection.timeoutMs }
+                    if ($mc.detection.networkCheckSec) { $actN = [int]$mc.detection.networkCheckSec }
+                }
+                $deteccionCambia = (($det.timeoutMs -ne $actT) -or ($det.networkCheckSec -ne $actN))
+            }
+            if ($destinosCambian -or $deteccionCambia -or $aliasCambiado) { Write-JsonFile $monitorPath $obj }
             # Solo destinos/deteccion obligan a reiniciar el monitor; un cambio de alias no (el monitor
             # lo toma en su proximo arranque y Cargador_DB.ps1 lo lee de monitor.json en cada envio).
-            if ($targetsNuevos -or $instr.detection) { $monitorChanged = $true }
+            if ($destinosCambian -or $deteccionCambia) { $monitorChanged = $true }
         }
     }
 

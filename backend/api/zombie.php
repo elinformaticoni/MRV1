@@ -628,7 +628,7 @@ ob_start();
     </div>
   </div>
 
-  <p class="mut">Solo se envían las secciones marcadas; la PC sobrescribe esos campos y deja intactos los demás. Nunca se envían credenciales, token, URL ni alias.</p>
+  <p class="mut">Solo se envían las secciones marcadas; la PC sobrescribe esos campos y deja intactos los demás. Nunca se envían credenciales, token ni URL. El nombre del equipo solo se cambia desde el panel de análisis («Editar nombre»).</p>
 
   <fieldset class="sec" data-sec="targets"<?= $form['inc']['targets'] ? '' : ' disabled' ?>>
     <legend><label><input type="checkbox" name="inc[targets]" <?= $form['inc']['targets'] ? 'checked' : '' ?>> Destinos a monitorear</label></legend>
