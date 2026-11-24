@@ -1,16 +1,16 @@
 {
     "schemaVersion":  2,
-    "version":  "1.13.11",
-    "generado":  "2026-11-23T23:39:20",
-    "commit":  "b03ee53e45ed57a7c447d86c0dbeba06c595a8f2",
+    "version":  "1.13.12",
+    "generado":  "2026-11-24T00:38:44",
+    "commit":  "7b495f5e1c4a2f4fd544fdd1601f5aff6db5fb1b",
     "files":  [
                   {
                       "name":  "Monitor_Red.ps1",
                       "dest":  "bin",
                       "path":  "sistema/Monitor_Red.ps1",
-                      "sha256":  "bc7a5641b93255ef0e8d05cfd87992616bdb7dda5c781b5ebd2d09fdfb293e24",
-                      "sha256lf":  "1d8f55f88c31c03d96a0b1da00483eb093f8b47d60a302aac3e3ec940b4aef7c",
-                      "size":  46060
+                      "sha256":  "08b5e337859f16361cb85c02b9ee19aece881c13c9fafb1c03150fef6e515b63",
+                      "sha256lf":  "6a318e7d85acfd01ab975cc36c24dc353dd4fdf21aa45d330401747355b8fffc",
+                      "size":  52146
                   },
                   {
                       "name":  "Monitor_Red_Console.ps1",
@@ -24,17 +24,17 @@
                       "name":  "Servidor_Consola.ps1",
                       "dest":  "bin",
                       "path":  "sistema/Servidor_Consola.ps1",
-                      "sha256":  "3b4433069d48a507366c19c674a2070a5b5f4b40f368bdc86f0561db2740f3b9",
-                      "sha256lf":  "3b4433069d48a507366c19c674a2070a5b5f4b40f368bdc86f0561db2740f3b9",
-                      "size":  23666
+                      "sha256":  "98f1d1702a6b5d820e5093d7906820db9fcaacbcd50bee0959bb624f7ea99b40",
+                      "sha256lf":  "98f1d1702a6b5d820e5093d7906820db9fcaacbcd50bee0959bb624f7ea99b40",
+                      "size":  24234
                   },
                   {
                       "name":  "Consola_Web.html",
                       "dest":  "bin",
                       "path":  "sistema/Consola_Web.html",
-                      "sha256":  "c871e6073fbca65af640de754cb69b3bb6612ba01a1200cb4251e3e9a1669eb7",
-                      "sha256lf":  "c871e6073fbca65af640de754cb69b3bb6612ba01a1200cb4251e3e9a1669eb7",
-                      "size":  51982
+                      "sha256":  "4057dbcd2b3b34d00d0458fc3b6e6e27154ee1e78473309b2d77c12be14fc88d",
+                      "sha256lf":  "4057dbcd2b3b34d00d0458fc3b6e6e27154ee1e78473309b2d77c12be14fc88d",
+                      "size":  51818
                   },
                   {
                       "name":  "Cargador_FTP.ps1",
@@ -48,9 +48,9 @@
                       "name":  "Cargador_DB.ps1",
                       "dest":  "bin",
                       "path":  "sistema/Cargador_DB.ps1",
-                      "sha256":  "5fb5d6fbf667a8025e54e3b15fd4548a95876198f38e799a55630f48a076a9d5",
-                      "sha256lf":  "5fb5d6fbf667a8025e54e3b15fd4548a95876198f38e799a55630f48a076a9d5",
-                      "size":  29622
+                      "sha256":  "e3579ea1416740d10fff60a7a415cc267e54477a8dc54e8d017600a65c84637b",
+                      "sha256lf":  "e3579ea1416740d10fff60a7a415cc267e54477a8dc54e8d017600a65c84637b",
+                      "size":  30934
                   },
                   {
                       "name":  "Sincronizar_Config.ps1",
@@ -64,9 +64,9 @@
                       "name":  "Actualizar_Script.ps1",
                       "dest":  "bin",
                       "path":  "sistema/Actualizar_Script.ps1",
-                      "sha256":  "1613170e6f713ec315a6010c4959526bb54ee4f37c28c2820042217d27653370",
-                      "sha256lf":  "1613170e6f713ec315a6010c4959526bb54ee4f37c28c2820042217d27653370",
-                      "size":  29062
+                      "sha256":  "5ca50a2776afe8e878eb6cb87812893e3bc67e12f2dd980599567bcb45f8968a",
+                      "sha256lf":  "5ca50a2776afe8e878eb6cb87812893e3bc67e12f2dd980599567bcb45f8968a",
+                      "size":  28782
                   },
                   {
                       "name":  "Abrir_Consola.bat",
@@ -88,8 +88,8 @@
                       "name":  "Instalar_Monitor.ps1",
                       "dest":  "root",
                       "path":  "sistema/Instalar_Monitor.ps1",
-                      "sha256":  "164a5d49172ac2bac2ae0d008601fb6491cdfd386be5c9a4a35bc9ef898caacc",
-                      "sha256lf":  "164a5d49172ac2bac2ae0d008601fb6491cdfd386be5c9a4a35bc9ef898caacc",
+                      "sha256":  "a97c74397d74230bc9d84917c3c3145b9256a652c1e55455743d3bfdb67ef85b",
+                      "sha256lf":  "a97c74397d74230bc9d84917c3c3145b9256a652c1e55455743d3bfdb67ef85b",
                       "size":  18297
                   },
                   {
