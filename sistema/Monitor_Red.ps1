@@ -109,6 +109,36 @@ function Test-UpdateRequest([long]$nowMs) {
                 } else { Write-DiagLog 'Se pidio enviar datos a la API, pero falta bin\Cargador_DB.ps1.' }
             }
         }
+        # [v1.13.8] cmd\alias.request: «Editar nombre» de la consola web. El contenido es {"alias":"..."}; se valida de nuevo aqui
+        # (el monitor es quien escribe config\monitor.json), se actualiza el alias en uso y se pide un envio a la API para que
+        # el panel de analisis lo vea. No hace falta reiniciar el monitor.
+        $aliasReq = Join-Path $script:Root 'cmd\alias.request'
+        if (Test-Path -LiteralPath $aliasReq) {
+            $txtAlias = $null
+            try { $txtAlias = [System.IO.File]::ReadAllText($aliasReq, [System.Text.Encoding]::UTF8) } catch { }
+            Remove-Item -LiteralPath $aliasReq -Force -ErrorAction SilentlyContinue
+            $nuevoAlias = ''
+            try { $nuevoAlias = ([string](($txtAlias | ConvertFrom-Json).alias) -replace '\s+', ' ').Trim() } catch { }
+            if (($nuevoAlias.Length -lt 1) -or ($nuevoAlias.Length -gt 150) -or ($nuevoAlias -match '[\x00-\x1F\x7F]')) {
+                Write-DiagLog 'Se rechazo la solicitud de cambio de nombre: el nombre no es valido.'
+            } else {
+                try {
+                    $mcPath = Join-Path $script:CfgDir 'monitor.json'
+                    $mcObj = [System.IO.File]::ReadAllText($mcPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                    $nuevoCfg = [ordered]@{}
+                    foreach ($p in $mcObj.PSObject.Properties) { $nuevoCfg[$p.Name] = $p.Value }
+                    $nuevoCfg['alias'] = $nuevoAlias
+                    $tmpMc = $mcPath + '.tmp'
+                    [System.IO.File]::WriteAllText($tmpMc, ($nuevoCfg | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding($false)))
+                    [System.IO.File]::Replace($tmpMc, $mcPath, [NullString]::Value)
+                    $script:Alias = $nuevoAlias
+                    Write-DiagLog ('Nombre (alias) del equipo cambiado desde la consola: "{0}".' -f $nuevoAlias)
+                    if ((Test-Path -LiteralPath (Join-Path $script:Root 'config\db_api.json')) -and (Get-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue)) {
+                        Start-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue
+                    }
+                } catch { Write-DiagLog ('No se pudo cambiar el nombre del equipo: ' + $_.Exception.Message) }
+            }
+        }
         if (-not (Test-Path -LiteralPath $script:UpdateRequestFile)) { return }
         Remove-Item -LiteralPath $script:UpdateRequestFile -Force -ErrorAction SilentlyContinue
         $upd = Join-Path $script:Root 'bin\Actualizar_Script.ps1'

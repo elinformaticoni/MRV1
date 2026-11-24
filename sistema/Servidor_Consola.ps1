@@ -244,7 +244,7 @@ $updateReqDir  = Join-Path $Root 'cmd'
 # [v1.13.2] Pide al monitor que busque e instale una actualizacion ahora. La consola no actualiza nada por
 # su cuenta (corre con el usuario normal y es de solo lectura): solo deja el archivo cmd\update.request,
 # que el monitor (SYSTEM) atiende lanzando Actualizar_Script.ps1 -Force. Solo se instalan versiones firmadas.
-function Invoke-CmdRequest($ctx, [int]$port, [string]$nombre, [string]$etiqueta) {
+function Invoke-CmdRequest($ctx, [int]$port, [string]$nombre, [string]$etiqueta, [string]$contenido = '') {
     $req = $ctx.Request
     $origin = [string]$req.Headers['Origin']
     if ($origin -and ($origin -ne ('http://localhost:{0}' -f $port))) { Send-Json2 $ctx 403 '{"ok":false,"error":"Origen no permitido."}'; return }
@@ -255,7 +255,7 @@ function Invoke-CmdRequest($ctx, [int]$port, [string]$nombre, [string]$etiqueta)
         return
     }
     try {
-        [System.IO.File]::WriteAllText((Join-Path $updateReqDir $nombre), (Get-Date).ToString('s'), $utf8)
+        [System.IO.File]::WriteAllText((Join-Path $updateReqDir $nombre), $(if ($contenido) { $contenido } else { (Get-Date).ToString('s') }), $utf8)
     } catch {
         Write-ServerLog ('No se pudo crear cmd\' + $nombre + ': ' + $_.Exception.Message)
         Send-Json2 $ctx 403 '{"ok":false,"codigo":"sin_permiso","error":"Este usuario no puede pedirle la actualizacion al monitor (reinstale con el paquete 1.13.2 o ejecute Actualizar_Script.ps1 como administrador)."}'
@@ -268,6 +268,26 @@ function Invoke-CmdRequest($ctx, [int]$port, [string]$nombre, [string]$etiqueta)
 
 function Send-Json2($ctx, [int]$code, [string]$json) { Send-Bytes $ctx $code 'application/json; charset=utf-8' $utf8.GetBytes($json) $null }
 
+# [v1.13.8] «Editar nombre» (alias) del equipo desde la consola web. Igual que las demas acciones, la consola no escribe
+# config\monitor.json (corre con el usuario normal): valida y deja cmd\alias.request con el nombre nuevo; el monitor lo aplica.
+function Invoke-AliasRequest($ctx, [int]$port) {
+    $req = $ctx.Request
+    $origin = [string]$req.Headers['Origin']
+    if ($origin -and ($origin -ne ('http://localhost:{0}' -f $port))) { Send-Json2 $ctx 403 '{"ok":false,"error":"Origen no permitido."}'; return }
+    if ([string]$req.Headers['X-MRV1-Csrf'] -ne $script:CsrfToken) { Send-Json2 $ctx 403 '{"ok":false,"error":"Solicitud no valida (recargue la pagina)."}'; return }
+    if ($req.ContentLength64 -gt 4096) { Send-Json2 $ctx 413 '{"ok":false,"error":"Solicitud demasiado grande."}'; return }
+    $nuevo = ''
+    try {
+        $sr = New-Object System.IO.StreamReader($req.InputStream, $utf8)
+        $nuevo = [string](($sr.ReadToEnd() | ConvertFrom-Json).alias); $sr.Dispose()
+    } catch { Send-Json2 $ctx 400 '{"ok":false,"error":"Solicitud no valida."}'; return }
+    $nuevo = ($nuevo -replace '\s+', ' ').Trim()
+    if ($nuevo.Length -lt 1) { Send-Json2 $ctx 422 '{"ok":false,"error":"Escriba el nombre del equipo."}'; return }
+    if ($nuevo.Length -gt 150) { Send-Json2 $ctx 422 '{"ok":false,"error":"El nombre no puede superar 150 caracteres."}'; return }
+    if ($nuevo -match '[\x00-\x1F\x7F]') { Send-Json2 $ctx 422 '{"ok":false,"error":"El nombre tiene caracteres no validos."}'; return }
+    Invoke-CmdRequest $ctx $port 'alias.request' 'cambiar el nombre (alias) del equipo' ('{"alias":' + (ConvertTo-JsonString $nuevo) + '}')
+}
+
 function Invoke-Request($ctx, [int]$port) {
     $req = $ctx.Request
     # Solo se atiende a quien llega por localhost / 127.0.0.1 (defensa contra DNS rebinding). Todo es de lectura (GET)
@@ -276,6 +296,7 @@ function Invoke-Request($ctx, [int]$port) {
     if ($hostHdr -notmatch '^(localhost|127\.0\.0\.1)(:\d+)?$') { Send-Text $ctx 403 'Acceso denegado.'; return }
     if (($req.HttpMethod -eq 'POST') -and ($req.Url.AbsolutePath -eq '/api/actualizar-ahora')) { Invoke-CmdRequest $ctx $port 'update.request' 'buscar actualizaciones'; return }
     if (($req.HttpMethod -eq 'POST') -and ($req.Url.AbsolutePath -eq '/api/subir-datos')) { Invoke-CmdRequest $ctx $port 'db.request' 'enviar los datos a la API'; return }
+    if (($req.HttpMethod -eq 'POST') -and ($req.Url.AbsolutePath -eq '/api/alias')) { Invoke-AliasRequest $ctx $port; return }
     if ($req.HttpMethod -ne 'GET') { Send-Text $ctx 405 'Solo lectura.'; return }
     $path = $req.Url.AbsolutePath
     switch ($path) {

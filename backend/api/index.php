@@ -1365,7 +1365,10 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
      opc.accionesMaquina = [[id, texto], …] y opc.onMaquina(id, maq, fecha). */
   function cerrarMenusMaq() {
     var a = document.querySelectorAll('.mr-maq-opc.abierto');
-    for (var i = 0; i < a.length; i++) { a[i].classList.remove('abierto'); a[i].firstChild.setAttribute('aria-expanded', 'false'); }
+    for (var i = 0; i < a.length; i++) {
+      a[i].classList.remove('abierto'); a[i].firstChild.setAttribute('aria-expanded', 'false');
+      var mq = a[i].closest('.mr-maq'); if (mq) mq.style.zIndex = '';
+    }
   }
   function menuMaquina(m, dia, opc) {
     var caja = el('span', 'mr-maq-opc'), btn = el('button', null, '⋮'), menu = el('div', 'mr-menu');
@@ -1375,7 +1378,11 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
       e.stopPropagation();
       var abierto = caja.classList.contains('abierto');
       cerrarMenusMaq();
-      if (!abierto) { caja.classList.add('abierto'); btn.setAttribute('aria-expanded', 'true'); }
+      if (!abierto) {
+        caja.classList.add('abierto'); btn.setAttribute('aria-expanded', 'true');
+        // Cada bloque de equipo es su propio nivel de apilamiento (z-index:1): se eleva el abierto para que el siguiente no tape el menu.
+        var mq = caja.closest('.mr-maq'); if (mq) mq.style.zIndex = '5';
+      }
     };
     opc.accionesMaquina.forEach(function (a) {
       var b = el('button', null, a[1]); b.type = 'button';

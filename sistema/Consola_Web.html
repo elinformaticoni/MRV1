@@ -100,6 +100,17 @@ td.m{overflow-wrap:anywhere;min-width:220px}
 .t-OK{color:var(--ok);font-weight:600}.t-ERROR{color:var(--err);font-weight:600}.t-EVENTO{color:var(--warn);font-weight:600}.t-INICIO{color:var(--ini);font-weight:600}.t-inc{color:var(--tenue)}
 .pie{margin:18px 0 6px;color:var(--tenue);font-size:12px;text-align:center}
 .oculto{display:none!important}
+.ico{border:1px solid transparent;background:transparent;color:var(--tenue);border-radius:7px;padding:2px 7px;font:inherit;font-size:15px;line-height:1;cursor:pointer}
+.ico:hover{border-color:var(--borde);background:var(--grid);color:var(--texto)}
+.ico:focus-visible,.modal input:focus-visible{outline:2px solid var(--acento);outline-offset:2px}
+.modal{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:12px}
+.modal .caja{width:min(480px,100%);background:var(--panel);color:var(--texto);border:1px solid var(--borde);border-radius:14px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.modal h3{font-size:16px;margin-bottom:6px}
+.modal label{display:block;font-size:12px;color:var(--suave);margin:12px 0 4px}
+.modal input{width:100%;font:inherit;font-size:15px;color:var(--texto);background:var(--panel);border:1px solid var(--borde);border-radius:9px;padding:8px 10px}
+.modal .acc{margin-top:12px}
+.btn.sec{border-color:var(--borde);color:var(--suave)}
+.btn.sec:hover:not([disabled]){background:var(--grid);color:var(--texto)}
 @media (max-width:600px){.wrap{padding:12px}.lat b{font-size:26px}.reloj{text-align:left;justify-content:flex-start}}
 </style>
 </head>
@@ -107,7 +118,7 @@ td.m{overflow-wrap:anywhere;min-width:220px}
 <div class="wrap">
   <header class="top">
     <div>
-      <h1><span>Monitor de Red</span><span class="pill" id="ver"></span><span class="alias" id="alias"></span></h1>
+      <h1><span>Monitor de Red</span><span class="pill" id="ver"></span><span class="alias" id="alias"></span><button type="button" class="ico" id="ed-alias" title="Editar el nombre (alias) de este equipo" aria-label="Editar el nombre de este equipo">&#9998;</button></h1>
       <div class="sub" id="ident">Conectando…</div>
       <div class="sub" id="sesion"></div>
     </div>
@@ -163,6 +174,18 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     </div>
     <div class="nota" id="nota-cam"></div>
   </section>
+
+  <div class="modal oculto" id="modal-alias" role="dialog" aria-modal="true" aria-labelledby="ma-t">
+    <div class="caja">
+      <h3 id="ma-t">Editar nombre del equipo</h3>
+      <div class="nota">Equipo (nombre de Windows): <b id="ma-pc"></b></div>
+      <label for="ma-in">Nombre (alias)</label>
+      <input id="ma-in" type="text" maxlength="150" autocomplete="off">
+      <div class="acc"><span class="res err" id="ma-err" role="alert"></span></div>
+      <div class="nota">Se guarda en este equipo y se envía a la base de análisis en unos segundos. La carpeta del FTP también lleva este nombre: si cambia, la siguiente carga crea una carpeta nueva y la anterior queda en el servidor.</div>
+      <div class="acc"><button type="button" class="btn" id="ma-ok">Guardar</button><button type="button" class="btn sec" id="ma-no">Cancelar</button><span class="res" id="ma-res"></span></div>
+    </div>
+  </div>
 
   <div class="pie">Consola de solo lectura · lee los registros de esta PC · cerrar la pestaña no detiene el monitor</div>
 </div>
@@ -272,6 +295,7 @@ td.m{overflow-wrap:anywhere;min-width:220px}
       $('punto').className = 'dot mala';
       return;
     }
+    seguirAlias();
     $('ver').textContent = st.version || '';
     var ad = st.adapter, adTxt = '(sin adaptador)';
     if (ad && ad.name && ad.ip) adTxt = ad.name + ' (' + ad.type + (ad.ssid ? ' ' + ad.ssid : '') + ') ' + ad.ip;
@@ -289,6 +313,46 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     if (detenido) al.appendChild(el('div', 'alerta err', 'MONITOR DETENIDO'));
     else if (viejo) al.appendChild(el('div', 'alerta err', 'MONITOR NO ACTIVO / DATOS DESACTUALIZADOS (último dato hace ' + dur(edad) + ')'));
   }
+
+  /* ---------- editar el nombre (alias) del equipo ---------- */
+  // La consola es de solo lectura: pide el cambio al servidor local, que deja cmd\alias.request; el monitor lo aplica
+  // (config\monitor.json) y la pagina espera a que el alias de status.json cambie.
+  function abrirAlias() {
+    S.aliasReq = null;
+    $('ma-pc').textContent = (S.estado && S.estado.status && S.estado.status.computer) || '';
+    $('ma-in').value = (S.estado && S.estado.alias) || '';
+    $('ma-err').textContent = ''; $('ma-res').textContent = ''; $('ma-ok').disabled = false;
+    $('modal-alias').classList.remove('oculto');
+    $('ma-in').focus(); $('ma-in').select();
+  }
+  function cerrarAlias() { S.aliasReq = null; $('modal-alias').classList.add('oculto'); $('ed-alias').focus(); }
+  function guardarAlias() {
+    var v = $('ma-in').value.replace(/\s+/g, ' ').trim(), err = $('ma-err'), res = $('ma-res'), ok = $('ma-ok');
+    if (!v) { err.textContent = 'Escriba el nombre del equipo.'; $('ma-in').focus(); return; }
+    if (S.estado && v === (S.estado.alias || '')) { cerrarAlias(); return; }
+    err.textContent = ''; res.textContent = 'Enviando solicitud…'; ok.disabled = true;
+    var meta = document.querySelector('meta[name=csrf]'), tok = meta ? meta.getAttribute('content') : '';
+    postConTiempo('/api/alias', tok, JSON.stringify({ alias: v })).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: 'Respuesta no válida del servidor local.' }; });
+    }).then(function (j) {
+      if (j.ok) { S.aliasReq = { t0: Date.now(), nuevo: v }; res.textContent = 'Solicitado; esperando al monitor…'; }
+      else { res.textContent = ''; err.textContent = j.error || 'No se pudo solicitar el cambio.'; ok.disabled = false; }
+    }, function () { res.textContent = ''; err.textContent = 'No se pudo contactar con la consola local. Si acaba de actualizar, cierre esta pestaña y abra la consola de nuevo.'; ok.disabled = false; });
+  }
+  function seguirAlias() {
+    var a = S.aliasReq; if (!a) return;
+    if (S.estado && S.estado.alias === a.nuevo) cerrarAlias();
+    else if (Date.now() - a.t0 > 30000) {
+      S.aliasReq = null; $('ma-res').textContent = ''; $('ma-ok').disabled = false;
+      $('ma-err').textContent = 'El monitor no respondió. Si es anterior a la 1.13.8 no atiende esta solicitud: actualice o reinstale con el paquete nuevo.';
+    }
+  }
+  $('ed-alias').onclick = abrirAlias;
+  $('ma-ok').onclick = guardarAlias;
+  $('ma-no').onclick = cerrarAlias;
+  $('ma-in').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); guardarAlias(); } };
+  $('modal-alias').addEventListener('mousedown', function (e) { if (e.target === this) cerrarAlias(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('modal-alias').classList.contains('oculto')) cerrarAlias(); });
 
   /* ---------- tarjetas de destinos ---------- */
   function pintarTarjetas() {
@@ -537,9 +601,11 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     firma_invalida: ['Se rechazó la actualización: la firma no es válida.', 'err'], manifiesto_invalido: ['Se rechazó la actualización: el paquete no es válido.', 'err'],
     sin_clave: ['Esta PC no tiene la clave de actualización: reinstale con el paquete nuevo.', 'warn'] };
   // POST con limite de tiempo: si el servidor local es de una version anterior y no contesta, no se queda en «Enviando solicitud…».
-  function postConTiempo(url, tok) {
+  function postConTiempo(url, tok, cuerpo) {
     var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 10000);
-    return fetch(url, { method: 'POST', headers: { 'X-MRV1-Csrf': tok }, signal: ac.signal }).then(function (r) { clearTimeout(t); return r; },
+    var h = { 'X-MRV1-Csrf': tok };
+    if (cuerpo !== undefined) h['Content-Type'] = 'application/json';
+    return fetch(url, { method: 'POST', headers: h, body: cuerpo, signal: ac.signal }).then(function (r) { clearTimeout(t); return r; },
       function (e) { clearTimeout(t); throw e; });
   }
   function seguirActualizacion() {
