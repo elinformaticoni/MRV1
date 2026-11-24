@@ -170,15 +170,7 @@ try {
 }
 
 // Anota la hora de esta carga (mejor esfuerzo: un fallo aquí no afecta al envío). Cualquier versión del cliente.
-mr_envio_anotar($pc);
-// Vigilante: últimas horas en que la PC estuvo encendida (solo clientes 1.13.12 o posteriores las mandan).
-if (is_array($body['latidos'] ?? null)) {
-    try {
-        mr_envio_latidos($pc, $body['latidos']);
-    } catch (Throwable $e) {
-        error_log('[MR registros.php latidos] ' . $e->getMessage());
-    }
-}
+mr_envio_anotar($pc, is_array($body['latidos'] ?? null) ? $body['latidos'] : []);   // latidos: solo clientes 1.13.12 o posteriores
 
 mr_json_response(200, [
     'ok'           => true,

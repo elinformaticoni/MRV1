@@ -161,6 +161,7 @@ function mr_envio_leer(string $ruta): array
         'ultimo'  => is_array($d) && is_string($d['ultimo'] ?? null) ? $d['ultimo'] : '',
         'dias'    => is_array($d) && is_array($d['dias'] ?? null) ? $d['dias'] : [],
         'latidos' => is_array($d) && is_array($d['latidos'] ?? null) ? $d['latidos'] : [],
+        'ut'      => is_array($d) ? (int) ($d['ut'] ?? 0) : 0,   // instante UNIX de la última escritura (limita las escrituras seguidas)
     ];
 }
 
@@ -177,51 +178,42 @@ function mr_envio_escribir(string $ruta, array $d): bool
     return @file_put_contents($ruta, json_encode($d, JSON_UNESCAPED_UNICODE), LOCK_EX) !== false;
 }
 
-/** Anota que la PC se comunicó ahora: la hora de su última comunicación de cada día (se conservan los últimos 40 días). */
-function mr_envio_registrar(string $pc): bool
-{
-    $ruta = mr_envio_ruta($pc);
-    if ($ruta === null) {
-        return false;
-    }
-    $d = mr_envio_leer($ruta);
-    $ahora = mr_hora_local(time());
-    $d['ultimo'] = $ahora;
-    $d['dias'][substr($ahora, 0, 10)] = substr($ahora, 11);
-    return mr_envio_escribir($ruta, $d);
-}
-
 /**
- * Latidos que trae la PC (Monitor_Red.ps1 sobrescribe latidos.json cada 2 min con su hora local): la última hora en que estuvo
- * encendida cada sesión. Se conserva, por día, la más tardía. Se ignoran los valores mal formados o en el futuro (reloj desajustado).
+ * Anota una comunicación de la PC con el servidor: la hora de su última comunicación de cada día (últimos 40 días) y, si trae,
+ * los latidos del vigilante (Monitor_Red.ps1: última hora encendida de cada sesión; se conserva la más tardía de cada día; se
+ * ignoran los mal formados, con hora imposible o en el futuro). Una sola lectura y, como mucho, una escritura: si la última fue
+ * hace menos de 60 s y no hay latidos nuevos no se escribe nada (una carga manda varias peticiones seguidas).
+ * Nunca falla: anotar la comunicación no debe afectar a la respuesta que recibe la PC.
  */
-function mr_envio_latidos(string $pc, array $latidos): bool
-{
-    $ruta = mr_envio_ruta($pc);
-    if ($ruta === null || !$latidos) {
-        return false;
-    }
-    $d = mr_envio_leer($ruta);
-    $limite = mr_hora_local(time() + 600);
-    $cambio = false;
-    foreach (array_slice($latidos, 0, 30) as $l) {
-        $l = (string) $l;
-        if (!preg_match('/^(\d{4}-\d{2}-\d{2})T((?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d)$/', $l, $m) || $l > $limite) {
-            continue;
-        }
-        if (!isset($d['latidos'][$m[1]]) || $d['latidos'][$m[1]] < $m[2]) {
-            $d['latidos'][$m[1]] = $m[2];
-            $cambio = true;
-        }
-    }
-    return $cambio ? mr_envio_escribir($ruta, $d) : true;
-}
-
-/** Igual que mr_envio_registrar() pero nunca falla: anotar la comunicación no debe afectar a la respuesta que recibe la PC. */
-function mr_envio_anotar(string $pc): void
+function mr_envio_anotar(string $pc, array $latidos = []): void
 {
     try {
-        mr_envio_registrar($pc);
+        $ruta = mr_envio_ruta($pc);
+        if ($ruta === null) {
+            return;
+        }
+        $d = mr_envio_leer($ruta);
+        $t = time();
+        $limite = mr_hora_local($t + 600);
+        $nuevos = false;
+        foreach (array_slice($latidos, 0, 30) as $l) {
+            $l = (string) $l;
+            if (!preg_match('/^(\d{4}-\d{2}-\d{2})T((?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d)$/', $l, $m) || $l > $limite) {
+                continue;
+            }
+            if (!isset($d['latidos'][$m[1]]) || $d['latidos'][$m[1]] < $m[2]) {
+                $d['latidos'][$m[1]] = $m[2];
+                $nuevos = true;
+            }
+        }
+        if (!$nuevos && $t - $d['ut'] < 60) {
+            return;
+        }
+        $ahora = mr_hora_local($t);
+        $d['ultimo'] = $ahora;
+        $d['dias'][substr($ahora, 0, 10)] = substr($ahora, 11);
+        $d['ut'] = $t;
+        mr_envio_escribir($ruta, $d);
     } catch (Throwable $e) {
         error_log('[MR envio] ' . $e->getMessage());
     }

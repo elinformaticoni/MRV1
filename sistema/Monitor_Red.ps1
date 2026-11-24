@@ -237,8 +237,11 @@ function Update-CsvRow([string]$file, [string]$prefix, [string]$newLine) {
     } finally { $fs.Dispose() }
 }
 
-# Anade [INCOMPLETO] a las filas OK/ERROR que quedaron sin cerrar (apagado abrupto).
-function Set-IncompleteMarks([string]$file) {
+# Filas OK/ERROR que quedaron sin cerrar (apagado abrupto o falla de energia). [v1.13.12] Si se conoce la ultima hora en que el
+# equipo estuvo encendido ($cierre, del vigilante latidos.json) la fila se CIERRA con su duracion real hasta ese momento: no cambia su
+# mensaje, asi en el servidor es la misma fila (se actualiza) y no una nueva. Sin ese dato (o si $cierre es anterior a la fila) se
+# anade [INCOMPLETO] como antes (ese cambio de mensaje crea una fila nueva en el servidor, por eso solo es el ultimo recurso).
+function Set-IncompleteMarks([string]$file, $cierre = $null) {
     if (-not (Test-Path -LiteralPath $file)) { return }
     $fs = New-Object System.IO.FileStream($file, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::Read)
     try {
@@ -249,9 +252,22 @@ function Set-IncompleteMarks([string]$file) {
             $l = $lines[$i]
             $cr = ''
             if ($l.EndsWith("`r")) { $cr = "`r"; $l = $l.Substring(0, $l.Length - 1) }
-            if (($l -match '^\d{4}-\d{2}-\d{2};\d{2}:\d{2}:\d{2};(OK|ERROR);;;') -and (-not $l.EndsWith('[INCOMPLETO]'))) {
-                $lines[$i] = $l + ' [INCOMPLETO]' + $cr
-                $changed = $true
+            $m = [regex]::Match($l, '^(\d{4}-\d{2}-\d{2});(\d{2}:\d{2}:\d{2});(OK|ERROR);;;')
+            if ($m.Success -and (-not $l.EndsWith('[INCOMPLETO]'))) {
+                $cerrada = $false
+                if ($null -ne $cierre) {
+                    $ini = [datetime]::MinValue
+                    if ([datetime]::TryParseExact(($m.Groups[1].Value + 'T' + $m.Groups[2].Value), 'yyyy-MM-ddTHH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$ini) -and ($cierre -ge $ini)) {
+                        $secs = [int][math]::Round(($cierre - $ini).TotalSeconds)
+                        $lines[$i] = ('{0};{1};{2};{3};;' -f $m.Groups[1].Value, $m.Groups[2].Value, $m.Groups[3].Value, $secs) + $l.Substring($m.Length) + $cr
+                        $cerrada = $true
+                        $changed = $true
+                    }
+                }
+                if (-not $cerrada) {
+                    $lines[$i] = $l + ' [INCOMPLETO]' + $cr
+                    $changed = $true
+                }
             }
         }
         if ($changed) {
@@ -762,6 +778,17 @@ function Invoke-GapHandling([double]$gapSecs, [long]$lastTickMs, [long]$nowMs) {
 # estado que quedo abierto, sin depender de la frecuencia de carga ni de que el servidor sea alcanzable en ese momento.
 # Mejor esfuerzo: un fallo aqui nunca afecta al monitoreo.
 # ---------------------------------------------------------------------------------------------
+# Ultima hora en que el equipo estuvo encendido en la sesion anterior (lo que dejo escrito latidos.json), o $null.
+function Get-UltimoLatidoPrevio {
+    try {
+        if (-not (Test-Path -LiteralPath $script:LatidoFile)) { return $null }
+        $p = [System.IO.File]::ReadAllText($script:LatidoFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        $d = [datetime]::MinValue
+        if ($p.actual -and $p.actual.ultimo -and [datetime]::TryParseExact([string]$p.actual.ultimo, 'yyyy-MM-ddTHH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$d)) { return $d }
+    } catch { }
+    return $null
+}
+
 function Write-Latido {
     try {
         $obj = [ordered]@{
@@ -915,11 +942,12 @@ public static class MRShutdown {
     $script:LastActive = $script:Net.Active
 
     # Archivos del dia, marcado de filas incompletas de la sesion anterior y filas INICIO
+    $cierrePrevio = Get-UltimoLatidoPrevio   # [v1.13.12] hasta cuando estuvo encendido en la sesion anterior (o $null)
     foreach ($t in $script:Targets) {
         $t.File = Get-CsvPath $t.Address $script:Day
         try {
             $latest = Get-LatestCsv $t
-            if ($latest) { Set-IncompleteMarks $latest }
+            if ($latest) { Set-IncompleteMarks $latest $cierrePrevio }
         } catch { Write-DiagLog ('No se pudo marcar filas incompletas: ' + $_.Exception.Message) }
     }
     Add-StartRows $false

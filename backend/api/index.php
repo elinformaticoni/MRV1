@@ -262,8 +262,14 @@ function mr_eliminar_pc(PDO $pdo, string $pc): array
     }
 
     $rutaEnvio = mr_envio_ruta($pc);
-    if ($rutaEnvio !== null && is_file($rutaEnvio)) {
-        @unlink($rutaEnvio);
+    if ($rutaEnvio !== null) {
+        // Archivos de la PC en el servidor: sus comunicaciones/latidos y el último informe de versión (si no, queda huérfano y
+        // el informe de una PC que ya no existe seguiría contando al calcular la versión publicada).
+        foreach ([$rutaEnvio, __DIR__ . '/update/pcs/' . strtolower($pc) . '.json'] as $archivo) {
+            if (is_file($archivo)) {
+                @unlink($archivo);
+            }
+        }
     }
 
     $rutaZombie = mr_ruta_zombie($pc);

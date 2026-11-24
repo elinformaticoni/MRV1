@@ -175,14 +175,28 @@ function Get-VersionInstalada {
     } catch { return '' }
 }
 
+# [v1.13.12] El alias de monitor.json se lee solo cuando el archivo cambia (la pagina consulta /api/estado cada segundo).
+$script:AliasMon = ''
+$script:AliasMonStamp = -1
+function Get-AliasMonitor {
+    try {
+        if (-not (Test-Path -LiteralPath $monCfgFile)) { return '' }
+        $stamp = (Get-Item -LiteralPath $monCfgFile).LastWriteTimeUtc.Ticks
+        if ($stamp -ne $script:AliasMonStamp) {
+            $mc = Read-JsonObj $monCfgFile
+            $script:AliasMon = if ($mc -and $mc.alias) { [string]$mc.alias } else { '' }
+            $script:AliasMonStamp = $stamp
+        }
+        return $script:AliasMon
+    } catch { return '' }
+}
+
 function Get-EstadoJson {
     $now = Get-Date
     $st = Read-JsonText $statusFile
     # [v1.13.11] El alias vigente es el de config\monitor.json (lo que se envia a la API y lo que cambian la consola, el panel
     # y la configuracion remota); el de status.json es el que el monitor leyo al arrancar y puede estar viejo.
-    $alias = ''
-    $mc = Read-JsonObj $monCfgFile
-    if ($mc -and $mc.alias) { $alias = [string]$mc.alias }
+    $alias = Get-AliasMonitor
     if ([string]::IsNullOrWhiteSpace($alias) -and $st) { try { $alias = [string](($st | ConvertFrom-Json).alias) } catch { } }
     $ftpSt = Read-JsonText $ftpStatusFile
     $dbSt  = Read-JsonText $dbStatusFile

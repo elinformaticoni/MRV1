@@ -344,7 +344,7 @@ try {
             destino = $destino
             filas   = @($filasLote)
             # [v1.13.12] Vigilante: ultimas horas en que este equipo estuvo encendido (sesiones anteriores + la actual), de latidos.json.
-            latidos = @($script:Latidos)
+            latidos = @($(if (-not $script:LatidosEnviados) { $script:Latidos } else { @() }))
         }
         $body = $bodyObj | ConvertTo-Json -Depth 6 -Compress
 
@@ -366,6 +366,7 @@ try {
                     Write-Log ('Respuesta HTTP 200 que no es JSON de la API para {0}. Inicio de la respuesta: {1}' -f $destino, $ini)
                     return @{ Ok = $false; Insertadas = 0; Actualizadas = 0; Error = $lastErr }
                 }
+                $script:LatidosEnviados = $true
                 return @{ Ok = $true; Insertadas = [int]$json.insertadas; Actualizadas = [int]$json.actualizadas; Error = $null }
             } catch {
                 $h = Get-HttpInfo $_.Exception $_.ErrorDetails
@@ -417,6 +418,7 @@ try {
     # [v1.13.12] Vigilante: Monitor_Red.ps1 sobrescribe latidos.json cada 2 minutos con la hora actual. Se envian las 10 sesiones
     # anteriores y la actual (el servidor se queda con la hora mas tardia de cada dia, asi que repetirlas no cambia nada).
     $script:Latidos = @()
+    $script:LatidosEnviados = $false   # basta con mandarlos una vez por corrida (el servidor se queda con el mas tardio de cada dia)
     try {
         $lf = Join-Path $Root 'latidos.json'
         if (Test-Path -LiteralPath $lf) {

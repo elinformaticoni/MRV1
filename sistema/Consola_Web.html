@@ -227,7 +227,6 @@ td.m{overflow-wrap:anywhere;min-width:220px}
   }
   function ms(v) { return (v === null || v === undefined) ? '--' : v + ' ms'; }
   function colorDe(i) { return COLORES[i % COLORES.length]; }
-  function svgEsc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
   function pedir(url) {
     var ac = new AbortController(), t = setTimeout(function () { ac.abort(); }, 4000);

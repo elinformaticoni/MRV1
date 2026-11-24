@@ -101,12 +101,6 @@ function Get-LocalVersion {
     return '0.0'
 }
 
-function Get-FileSha256([string]$path) {
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return ([System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($path))) -replace '-', '').ToLowerInvariant() }
-    finally { $sha.Dispose() }
-}
-
 # ---------------------------------------------------------------------------------------------
 # Red
 # ---------------------------------------------------------------------------------------------
