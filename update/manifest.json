@@ -1,8 +1,8 @@
 {
     "schemaVersion":  2,
-    "version":  "1.13.9",
-    "generado":  "2026-11-23T23:23:32",
-    "commit":  "1c1bb975e17e82d54f311cf03185ef7fe102e884",
+    "version":  "1.13.10",
+    "generado":  "2026-11-23T23:32:09",
+    "commit":  "ed25c87c7d47156425985c93cc99860bfec2b7e2",
     "files":  [
                   {
                       "name":  "Monitor_Red.ps1",
@@ -64,9 +64,9 @@
                       "name":  "Actualizar_Script.ps1",
                       "dest":  "bin",
                       "path":  "sistema/Actualizar_Script.ps1",
-                      "sha256":  "1401a93b1088d821ce1bbaa4c9c685c22fe8f19ef0d70310c93c56e83d4e5324",
-                      "sha256lf":  "1401a93b1088d821ce1bbaa4c9c685c22fe8f19ef0d70310c93c56e83d4e5324",
-                      "size":  27031
+                      "sha256":  "1613170e6f713ec315a6010c4959526bb54ee4f37c28c2820042217d27653370",
+                      "sha256lf":  "1613170e6f713ec315a6010c4959526bb54ee4f37c28c2820042217d27653370",
+                      "size":  29062
                   },
                   {
                       "name":  "Abrir_Consola.bat",
@@ -88,9 +88,9 @@
                       "name":  "Instalar_Monitor.ps1",
                       "dest":  "root",
                       "path":  "sistema/Instalar_Monitor.ps1",
-                      "sha256":  "83ce2141132b4d0c6d5d26699960251503dbe5ce1acdcc913390b537ec194d18",
-                      "sha256lf":  "83ce2141132b4d0c6d5d26699960251503dbe5ce1acdcc913390b537ec194d18",
-                      "size":  18296
+                      "sha256":  "2a444110bffd68b2a5ab830cb72eff437be046020c9d48b47267b62196e1a333",
+                      "sha256lf":  "2a444110bffd68b2a5ab830cb72eff437be046020c9d48b47267b62196e1a333",
+                      "size":  18297
                   },
                   {
                       "name":  "Instalar_FTP.bat",
