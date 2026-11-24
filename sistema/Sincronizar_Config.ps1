@@ -17,7 +17,9 @@
       3. Valida los valores recibidos (mismos rangos que los instaladores / MR_Z_LIM del
          servidor). Si algo no es valido, no aplica nada y lo registra en el log.
       4. Sobrescribe SOLO las secciones que vinieron en la instruccion, en monitor.json,
-         ftp.json y db_api.json. Nunca toca credenciales FTP, token, URL ni alias.
+         ftp.json y db_api.json. Nunca toca credenciales FTP, token ni URL. El alias solo
+         cambia si la instruccion trae "alias" (lo manda el panel de analisis, "Editar
+         nombre"); en ese caso se pide ademas un envio de datos (paso 8), sin reiniciar el monitor.
       5. Si cambiaron destinos o "detection", escribe un EVENTO "Configuracion remota
          aplicada (rev. N)" en el CSV de cada destino anterior y reinicia el monitor con una
          parada ordenada (igual que Instalar_Monitor.ps1).
@@ -48,6 +50,14 @@ $stopFlag     = Join-Path $Root 'stop.flag'
 $pc           = $env:COMPUTERNAME
 $utf8         = New-Object System.Text.UTF8Encoding($false)
 $utf8Bom      = New-Object System.Text.UTF8Encoding($true)
+
+# [v1.13.8] User-Agent propio (el de PowerShell por defecto suele ser marcado por las protecciones anti-bot).
+$verTxt = '0'
+try {
+    $vp = Join-Path $cfgDir 'version.json'
+    if (Test-Path -LiteralPath $vp) { $vj = [System.IO.File]::ReadAllText($vp, [System.Text.Encoding]::UTF8) | ConvertFrom-Json; if ($vj.version) { $verTxt = [string]$vj.version } }
+} catch { }
+$userAgent = 'MRV1-Config/' + $verTxt
 
 # Rangos validos (MR_Z_LIM del servidor - ver backend/IA.md seccion 5.1; los mismos que usan
 # Instalar_Monitor.ps1 / Instalar_FTP.ps1 / Instalar_DB.ps1 para sus propias preguntas).
@@ -115,7 +125,7 @@ function Confirm-Revision([string]$zombieUrl, [string]$token, [long]$revision) {
         $bodyObj = [ordered]@{ pc = $pc; revision = $revision }
         $body = $bodyObj | ConvertTo-Json -Compress
         $resp = Invoke-WebRequest -Uri ($zombieUrl + '?accion=confirmar') -Method Post `
-            -Headers @{ 'X-MR-Token' = $token } -ContentType 'application/json; charset=utf-8' `
+            -Headers @{ 'X-MR-Token' = $token; 'Accept' = 'application/json' } -UserAgent $userAgent -ContentType 'application/json; charset=utf-8' `
             -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 20 -UseBasicParsing
         $json = $resp.Content | ConvertFrom-Json
         if ($json.ok) { return $true }
@@ -228,6 +238,14 @@ $mutex = New-Object System.Threading.Mutex($true, 'Global\MRV1_Zombie', [ref]$cr
 if (-not $createdNew) { Write-Log 'Ya hay otra sincronizacion de configuracion remota en curso; se omite esta.'; exit 0 }
 
 try {
+    # [v1.13.8] Si Cargador_DB.ps1 anoto que el servidor rechazo el envio (diag\db_backoff.json), no llamar al mismo
+    # servidor hasta que pase el plazo; y tras un arranque de Windows, esperar un tiempo al azar para no llegar todos a la vez.
+    $bk = Read-JsonFile (Join-Path $diagDir 'db_backoff.json')
+    if ($bk -and $bk.hasta -and ([datetime]$bk.hasta) -gt (Get-Date)) { Write-Log ('Servidor en espera por rechazo previo; no se consulta hasta {0}.' -f $bk.hasta); exit 0 }
+    try {
+        if (((Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime).TotalMinutes -lt 15) { Start-Sleep -Seconds (Get-Random -Minimum 0 -Maximum 61) }
+    } catch { }
+
     $cfgPath = Join-Path $cfgDir 'db_api.json'
     if (-not (Test-Path -LiteralPath $cfgPath)) { exit 0 }  # sin API de analisis habilitada: no hay a donde preguntar
     $dbCfg = Read-JsonFile $cfgPath
@@ -256,7 +274,7 @@ try {
     $resp = $null
     try {
         $resp = Invoke-WebRequest -Uri ('{0}?accion=config&pc={1}' -f $zombieUrl, [Uri]::EscapeDataString($pc)) `
-            -Headers @{ 'X-MR-Token' = $token } -Method Get -TimeoutSec 20 -UseBasicParsing
+            -Headers @{ 'X-MR-Token' = $token; 'Accept' = 'application/json' } -UserAgent $userAgent -Method Get -TimeoutSec 20 -UseBasicParsing
     } catch {
         $status = $null
         if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
@@ -304,6 +322,14 @@ try {
         if ($instr.ftp.runEveryMin -and -not (In-Range ([double]$instr.ftp.runEveryMin) $LIM.FtpRunEveryMin)) { [void]$errores.Add(('ftp.runEveryMin fuera de rango: {0}' -f $instr.ftp.runEveryMin)) }
         if ($instr.ftp.retries -and -not (In-Range ([double]$instr.ftp.retries) $LIM.Retries)) { [void]$errores.Add(('ftp.retries fuera de rango: {0}' -f $instr.ftp.retries)) }
     }
+    # [v1.13.8] alias: nombre del equipo corregido desde el panel de analisis (index.php, "Editar nombre").
+    $aliasNuevo = $null
+    if ($null -ne $instr.alias) {
+        $aliasNuevo = ([string]$instr.alias).Trim()
+        if ($aliasNuevo.Length -lt 1 -or $aliasNuevo.Length -gt 150 -or $aliasNuevo -match '[\x00-\x1F\x7F]') {
+            [void]$errores.Add('alias no valido (1 a 150 caracteres, sin caracteres de control)')
+        }
+    }
     if ($errores.Count -gt 0) {
         Write-Log ('Instruccion de configuracion remota (rev. {0}) invalida, no se aplica nada: {1}' -f $revision, ($errores -join ' | '))
         exit 0
@@ -314,13 +340,15 @@ try {
     $ftpPath     = Join-Path $cfgDir 'ftp.json'
 
     $monitorChanged = $false
+    $aliasCambiado = $false
     $targetsAnteriores = @()
-    if ($targetsNuevos -or $instr.detection) {
+    if ($targetsNuevos -or $instr.detection -or $aliasNuevo) {
         $mc = Read-JsonFile $monitorPath
-        if ($null -eq $mc) { Write-Log 'No existe config\monitor.json; se ignora la instruccion de destinos/detection.' }
+        if ($null -eq $mc) { Write-Log 'No existe config\monitor.json; se ignora la instruccion de destinos/detection/alias.' }
         else {
             $targetsAnteriores = @($mc.targets)
             $obj = [ordered]@{ schemaVersion = 1; alias = [string]$mc.alias }
+            if ($aliasNuevo -and $aliasNuevo -cne [string]$mc.alias) { $obj.alias = $aliasNuevo; $aliasCambiado = $true }
             if ($targetsNuevos) {
                 $obj.targets = @($targetsNuevos | ForEach-Object {
                     $tt = [ordered]@{ address = [string]$_.address }
@@ -340,7 +368,9 @@ try {
             }
             $obj.detection = $det
             Write-JsonFile $monitorPath $obj
-            $monitorChanged = $true
+            # Solo destinos/deteccion obligan a reiniciar el monitor; un cambio de alias no (el monitor
+            # lo toma en su proximo arranque y Cargador_DB.ps1 lo lee de monitor.json en cada envio).
+            if ($targetsNuevos -or $instr.detection) { $monitorChanged = $true }
         }
     }
 
@@ -389,11 +419,28 @@ try {
     if ($ftpFreqChanged) { Update-TaskFrequency 'MRV1 FTP' $newFtpRunEveryMin }
     if ($dbFreqChanged)  { Update-TaskFrequency 'MRV1 DB'  $newDbRunEveryMin }
 
-    Write-Log ('Configuracion remota rev. {0} aplicada (destinos/deteccion: {1}, ftp: {2}, db: {3}).' -f $revision, $monitorChanged, $ftpFreqChanged, $dbFreqChanged)
+    Write-Log ('Configuracion remota rev. {0} aplicada (destinos/deteccion: {1}, alias: {2}, ftp: {3}, db: {4}).' -f $revision, $monitorChanged, $aliasCambiado, $ftpFreqChanged, $dbFreqChanged)
 
     # Paso 7: confirmar al servidor y guardar el estado local.
     $confirmado = Confirm-Revision $zombieUrl $token $revision
     Save-State ([ordered]@{ schemaVersion = 1; revisionAplicada = $revision; aplicadaEn = (Get-Date).ToString('s'); confirmada = $confirmado })
+
+    # Paso 8 [v1.13.8]: si cambio el alias, mandar los datos ya con el nombre nuevo. Sin esto, el envio que
+    # acaba de terminar (con el nombre anterior) dejaria el nombre viejo en el panel hasta el siguiente.
+    if ($aliasCambiado) {
+        try {
+            $w = 0
+            $t = Get-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue
+            while ($t -and $t.State -eq 'Running' -and $w -lt 90) {
+                Start-Sleep -Seconds 2; $w += 2
+                $t = Get-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue
+            }
+            if ($t -and $t.State -ne 'Running') {
+                Start-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction Stop
+                Write-Log 'Alias nuevo aplicado: se pidio un envio de datos a la API para publicarlo.'
+            } else { Write-Log 'Alias nuevo aplicado; el envio de datos se hara en su siguiente corrida programada.' }
+        } catch { Write-Log ('No se pudo pedir el envio de datos tras cambiar el alias: ' + $_.Exception.Message) }
+    }
 }
 catch {
     Write-Log ('Error general de la sincronizacion de configuracion remota: ' + $_.Exception.Message)

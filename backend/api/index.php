@@ -11,6 +11,7 @@
  *   GET  index.php?accion=datos&desde=&hasta=&pc[]=…   → filas de esas máquinas en el rango
  *   GET  index.php?accion=dias&desde=&hasta=           → fechas del rango con algún registro (puntito del calendario)
  *   POST index.php?accion=eliminar_pc  {pc, csrf}      → borra una computadora y TODOS sus registros
+ *   POST index.php?accion=nombre_guardar {pc, nombre, csrf} → corrige el nombre (alias) de una PC y se lo manda por la configuración remota
  *   POST index.php  (clave=…)                          → inicio de sesión (si hay clave configurada)
  *   GET  index.php?salir=1                             → cerrar sesión
  *
@@ -125,6 +126,35 @@ if ($accion !== '') {
         }
     }
 
+    // Bitácora de notas manuales y nombre corregido de una PC: escritura (POST + sesión + CSRF, igual que "eliminar_pc").
+    if ($accion === 'nota_guardar' || $accion === 'nota_borrar' || $accion === 'nombre_guardar') {
+        if (!$requiereLog) {
+            mr_error(403, 'Configure una clave de acceso ("reporte" => ["clave" => "…"] en config.php) para poder anotar en la bitácora o cambiar nombres.');
+        }
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            mr_error(405, 'Método no permitido. Use POST.');
+        }
+        $body = mr_leer_cuerpo_json();
+        if (!hash_equals($csrf, (string) ($body['csrf'] ?? ''))) {
+            mr_error(403, 'La sesión del formulario venció. Recargue la página e intente de nuevo.');
+        }
+        try {
+            $r = match ($accion) {
+                'nota_guardar'   => mr_nota_guardar(mr_db(), $body),
+                'nota_borrar'    => mr_nota_borrar(mr_db(), $body),
+                default          => mr_nombre_guardar(mr_db(), $body),
+            };
+            mr_json_response(200, $r);
+        } catch (Throwable $e) {
+            error_log('[MR index.php ' . $accion . '] ' . $e->getMessage());
+            if (stripos($e->getMessage(), "doesn't exist") !== false || stripos($e->getMessage(), 'no such table') !== false) {
+                mr_error(500, 'Falta la tabla de notas: ejecute sql/003_notas.sql en la base de datos.');
+            }
+            $extra = mr_debug_habilitado() ? ['detalle' => $e->getMessage()] : [];
+            mr_error(500, $accion === 'nombre_guardar' ? 'Error interno al guardar el nombre.' : 'Error interno al guardar la nota.', $extra);
+        }
+    }
+
     [$desde, $hasta] = mr_rango_fechas();
 
     try {
@@ -136,6 +166,10 @@ if ($accion !== '') {
             $st = $pdo->prepare('SELECT DISTINCT fecha FROM registros WHERE fecha BETWEEN :desde AND :hasta ORDER BY fecha');
             $st->execute(['desde' => $desde, 'hasta' => $hasta]);
             mr_json_response(200, ['ok' => true, 'dias' => array_map(fn($f) => substr((string) $f, 0, 10), $st->fetchAll(PDO::FETCH_COLUMN))]);
+        }
+        if ($accion === 'notas') {
+            $r = mr_consultar_notas($pdo, $desde, $hasta, mr_lista_pcs());
+            mr_json_response(200, ['ok' => true, 'notas' => $r['notas'], 'notas_ok' => $r['ok']]);
         }
         if ($accion === 'datos') {
             mr_json_response(200, mr_consultar_datos($pdo, $desde, $hasta, mr_lista_pcs()));
@@ -221,12 +255,106 @@ function mr_eliminar_pc(PDO $pdo, string $pc): array
         throw $e;
     }
 
+    try {
+        $pdo->prepare('DELETE FROM notas WHERE pc = :pc')->execute(['pc' => $pc]);
+    } catch (Throwable $e) {
+        // La tabla de notas puede no existir todavía (sql/003_notas.sql): no es un error.
+    }
+
     $rutaZombie = mr_ruta_zombie($pc);
     if ($rutaZombie !== null && is_file($rutaZombie)) {
         @unlink($rutaZombie);
     }
 
     return ['ok' => true, 'pc' => $pc, 'registros_eliminados' => $eliminados];
+}
+
+/**
+ * Deja para la PC una instrucción de configuración remota (la misma que lee zombie.php y descarga
+ * Sincronizar_Config.ps1) con el campo "alias": la PC lo escribe en config\monitor.json y lo manda
+ * en sus próximos envíos. Si ya había una instrucción SIN aplicar, conserva sus secciones para no
+ * perderla; si ya estaba aplicada, la deja solo con el alias (así la PC no repite cambios ni se reinicia).
+ * Devuelve false si el nombre de la PC no sirve como nombre de archivo.
+ */
+function mr_nombre_instruir(PDO $pdo, string $pc, string $nombre): bool
+{
+    $ruta = mr_ruta_zombie($pc);
+    if ($ruta === null) {
+        return false;
+    }
+    $ant = null;
+    if (is_file($ruta)) {
+        $j = json_decode((string) @file_get_contents($ruta), true);
+        $ant = is_array($j) ? $j : null;
+    }
+    $secciones = [];
+    if ($ant !== null) {
+        $aplicada = false;
+        try {
+            $st = $pdo->prepare('SELECT config_rev_aplicada FROM computadoras WHERE pc = ?');
+            $st->execute([$pc]);
+            $aplicada = (int) $st->fetchColumn() >= (int) ($ant['revision'] ?? 0);
+        } catch (Throwable $e) {
+            // Sin la columna (falta sql/002) no se sabe: se conservan las secciones por prudencia.
+        }
+        if (!$aplicada) {
+            foreach (['targets', 'detection', 'db', 'ftp'] as $k) {
+                if (isset($ant[$k])) {
+                    $secciones[$k] = $ant[$k];
+                }
+            }
+        }
+    }
+    // Revisión monótona por PC (igual que zombie.php): la PC solo aplica si es mayor a la que ya aplicó.
+    $rev = max(time(), (int) ($ant['revision'] ?? 0) + 1);
+    $cfg = array_merge(['schemaVersion' => 1, 'revision' => $rev, 'generadoEn' => date('c', $rev)], $secciones, ['alias' => $nombre]);
+
+    if (!is_dir(MR_ZOMBIE_DIR)) {
+        mkdir(MR_ZOMBIE_DIR, 0755, true);
+    }
+    $htaccess = MR_ZOMBIE_DIR . '/.htaccess';
+    if (!is_file($htaccess)) {
+        file_put_contents($htaccess, "Require all denied\n");
+    }
+    $tmp = $ruta . '.' . bin2hex(random_bytes(4)) . '.tmp';
+    $json = json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (file_put_contents($tmp, $json . "\n", LOCK_EX) === false || !rename($tmp, $ruta)) {
+        @unlink($tmp);
+        throw new RuntimeException("No se pudo escribir la instrucción de $pc.");
+    }
+    return true;
+}
+
+/**
+ * Corrige el nombre (alias) de una PC: lo cambia ya en la base, para verlo de inmediato, y lo manda
+ * a la PC dentro de la configuración remota para que ella lo adopte (si no, su próximo envío lo
+ * devolvería al nombre anterior).
+ */
+function mr_nombre_guardar(PDO $pdo, array $body): array
+{
+    $pc = trim((string) ($body['pc'] ?? ''));
+    if ($pc === '' || mb_strlen($pc) > 100) {
+        mr_error(422, 'Parámetro "pc" inválido.');
+    }
+    $nombre = trim(preg_replace('/\s+/u', ' ', (string) ($body['nombre'] ?? '')));
+    if ($nombre === '') {
+        mr_error(422, 'Escriba el nombre del equipo.');
+    }
+    if (mb_strlen($nombre) > 150) {
+        mr_error(422, 'El nombre no puede superar 150 caracteres.');
+    }
+    if (preg_match('/[\x00-\x1F\x7F]/', $nombre)) {
+        mr_error(422, 'El nombre tiene caracteres no válidos.');
+    }
+    $chk = $pdo->prepare('SELECT 1 FROM computadoras WHERE pc = ?');
+    $chk->execute([$pc]);
+    if (!$chk->fetchColumn()) {
+        mr_error(404, 'No existe ninguna computadora con ese nombre.');
+    }
+
+    $enviada = mr_nombre_instruir($pdo, $pc, $nombre);
+    $pdo->prepare('UPDATE computadoras SET alias = ? WHERE pc = ?')->execute([$nombre, $pc]);
+    return ['ok' => true, 'pc' => $pc, 'alias' => $nombre, 'instruccion' => $enviada];
 }
 
 /** Máquinas (pc + alias) con registros en el rango, con sus destinos y días con datos. */
@@ -281,6 +409,141 @@ function mr_consultar_maquinas(PDO $pdo, string $desde, string $hasta): array
  * Filas de las máquinas pedidas en el rango, agrupadas por pc → destino.
  * Cada fila: [fecha, hora, tipo, tiempo_s|null, latencia_ms|null, mensaje|null]
  */
+/**
+ * Notas manuales (bitácora) de las PC pedidas en el rango: { pc: [[id, fecha, hora, texto], …] }.
+ * Si la tabla `notas` aún no existe (falta sql/003_notas.sql) devuelve ok=false y el resto sigue funcionando.
+ */
+function mr_consultar_notas(PDO $pdo, string $desde, string $hasta, array $pcs): array
+{
+    $marcas = implode(',', array_fill(0, count($pcs), '?'));
+    try {
+        $st = $pdo->prepare(
+            "SELECT id, pc, fecha, hora, texto FROM notas
+              WHERE fecha BETWEEN ? AND ? AND pc IN ($marcas)
+              ORDER BY pc, fecha, hora, id"
+        );
+        $st->execute(array_merge([$desde, $hasta], $pcs));
+    } catch (Throwable $e) {
+        error_log('[MR index.php notas] ' . $e->getMessage());
+        return ['ok' => false, 'notas' => new stdClass()];
+    }
+    $porPc = [];
+    foreach ($st as $f) {
+        $porPc[(string) $f['pc']][] = [
+            (int) $f['id'], substr((string) $f['fecha'], 0, 10), substr((string) $f['hora'], 0, 8), (string) $f['texto'],
+        ];
+    }
+    return ['ok' => true, 'notas' => $porPc ?: new stdClass()];
+}
+
+/** Valida y normaliza fecha (AAAA-MM-DD) y hora (HH:MM o HH:MM:SS) de una nota. */
+function mr_nota_fecha_hora(array $body): array
+{
+    $fecha = trim((string) ($body['fecha'] ?? ''));
+    if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $fecha, $m) || !checkdate((int) $m[2], (int) $m[3], (int) $m[1])) {
+        mr_error(422, 'Fecha inválida (esperado AAAA-MM-DD).');
+    }
+    $hora = trim((string) ($body['hora'] ?? ''));
+    if (!preg_match('/^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/', $hora, $h)) {
+        mr_error(422, 'Hora inválida (esperado HH:MM).');
+    }
+    return [$fecha, sprintf('%s:%s:%s', $h[1], $h[2], $h[3] ?? '00')];
+}
+
+/**
+ * Crea una nota por cada PC indicada (`pcs`) o, si viene `id`, corrige fecha, hora y texto de esa nota.
+ * El texto es libre y breve (máx. 300 caracteres); se guarda tal cual y se escapa al dibujarlo.
+ */
+function mr_nota_guardar(PDO $pdo, array $body): array
+{
+    [$fecha, $hora] = mr_nota_fecha_hora($body);
+    $texto = trim(preg_replace('/\s+/u', ' ', (string) ($body['texto'] ?? '')));
+    if ($texto === '') {
+        mr_error(422, 'Escriba el texto de la nota.');
+    }
+    if (mb_strlen($texto) > 300) {
+        mr_error(422, 'La nota no puede superar 300 caracteres.');
+    }
+
+    $id = (int) ($body['id'] ?? 0);
+    if ($id > 0) {
+        $st = $pdo->prepare('UPDATE notas SET fecha = ?, hora = ?, texto = ? WHERE id = ?');
+        $st->execute([$fecha, $hora, $texto, $id]);
+        return ['ok' => true, 'guardadas' => 1];
+    }
+
+    $pcs = $body['pcs'] ?? [];
+    if (!is_array($pcs)) {
+        $pcs = [$pcs];
+    }
+    $pcs = array_values(array_unique(array_filter(array_map(fn($p) => mb_substr(trim((string) $p), 0, 100), $pcs), fn($p) => $p !== '')));
+    if (!$pcs) {
+        mr_error(422, 'Seleccione al menos una máquina.');
+    }
+    if (count($pcs) > MR_MAX_PCS_CONSULTA) {
+        mr_error(422, 'Demasiadas máquinas en una sola nota (máx. ' . MR_MAX_PCS_CONSULTA . ').');
+    }
+    $marcas = implode(',', array_fill(0, count($pcs), '?'));
+    $st = $pdo->prepare("SELECT pc FROM computadoras WHERE pc IN ($marcas)");
+    $st->execute($pcs);
+    $validas = $st->fetchAll(PDO::FETCH_COLUMN);
+    if (!$validas) {
+        mr_error(404, 'Ninguna de las máquinas existe.');
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $ins = $pdo->prepare('INSERT INTO notas (pc, fecha, hora, texto) VALUES (?, ?, ?, ?)');
+        foreach ($validas as $pc) {
+            $ins->execute([(string) $pc, $fecha, $hora, $texto]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    return ['ok' => true, 'guardadas' => count($validas)];
+}
+
+/** Borra una nota por id. */
+function mr_nota_borrar(PDO $pdo, array $body): array
+{
+    $id = (int) ($body['id'] ?? 0);
+    if ($id <= 0) {
+        mr_error(422, 'Parámetro "id" inválido.');
+    }
+    $st = $pdo->prepare('DELETE FROM notas WHERE id = ?');
+    $st->execute([$id]);
+    return ['ok' => true, 'borradas' => $st->rowCount()];
+}
+
+/**
+ * Última IP conocida de la máquina ANTES de $desde (para los días del rango que no traen ningún
+ * evento con IP). Solo cuentan INICIO, "Cambio de dirección IP" y "Cambio de adaptador"; los demás
+ * mensajes pueden citar IP de destinos. Devuelve null si no hay ninguna.
+ */
+function mr_ip_previa(PDO $pdo, string $pc, string $desde): ?string
+{
+    $st = $pdo->prepare(
+        "SELECT tipo, mensaje FROM registros
+          WHERE pc = ? AND fecha < ? AND tipo IN ('INICIO','EVENTO')
+            AND (tipo = 'INICIO' OR mensaje LIKE 'Cambio de dirección IP:%' OR mensaje LIKE 'Cambio de adaptador:%')
+          ORDER BY fecha DESC, hora DESC, id DESC
+          LIMIT 40"
+    );
+    $st->execute([$pc, $desde]);
+    foreach ($st as $f) {
+        $msg = (string) ($f['mensaje'] ?? '');
+        if ($f['tipo'] === 'EVENTO' && preg_match('/->\s*(.*)$/u', $msg, $m)) {
+            $msg = $m[1];
+        }
+        if (preg_match_all('/\b\d{1,3}(?:\.\d{1,3}){3}\b/', $msg, $ips) && $ips[0]) {
+            return end($ips[0]);
+        }
+    }
+    return null;
+}
+
 function mr_consultar_datos(PDO $pdo, string $desde, string $hasta, array $pcs): array
 {
     $marcas = implode(',', array_fill(0, count($pcs), '?'));
@@ -327,11 +590,14 @@ function mr_consultar_datos(PDO $pdo, string $desde, string $hasta, array $pcs):
         if (isset($maq[$pc])) {
             $maq[$pc]['destinos'] = array_values($maq[$pc]['destinos']);
             $maq[$pc]['version'] = mr_version_pc($pc);
+            $maq[$pc]['ip_previa'] = mr_ip_previa($pdo, $pc, $desde);
             $lista[] = $maq[$pc];
         }
     }
 
-    return ['ok' => true, 'desde' => $desde, 'hasta' => $hasta, 'filas' => $n, 'maquinas' => $lista];
+    $notas = mr_consultar_notas($pdo, $desde, $hasta, $pcs);
+    return ['ok' => true, 'desde' => $desde, 'hasta' => $hasta, 'filas' => $n, 'maquinas' => $lista,
+            'notas' => $notas['notas'], 'notas_ok' => $notas['ok']];
 }
 
 $h = fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
@@ -495,6 +761,51 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
 .estado{font-size:13px;color:var(--suave)}
 .estado.error{color:var(--err)}
 @media (max-width:900px){.form{grid-template-columns:1fr}}
+.nota-fab{position:fixed;right:16px;bottom:16px;z-index:50;border:0;border-radius:999px;background:#f59e0b;color:#1f1300;font:inherit;font-weight:700;padding:12px 18px;box-shadow:0 4px 14px rgba(0,0,0,.3);cursor:pointer}
+.nota-fondo{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:12px}
+.nota-caja{width:min(520px,100%);max-height:94vh;overflow:auto;background:var(--panel);color:var(--texto);border:1px solid var(--borde);border-radius:12px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.nota-caja h3{margin:0 0 10px;font-size:16px}
+.nota-caja label.etq2{display:block;font-size:12px;color:var(--suave);margin:10px 0 4px}
+.nota-caja textarea,.nota-caja input[type=date],.nota-caja input[type=time]{width:100%;box-sizing:border-box;font:inherit;font-size:16px;color:var(--texto);background:var(--panel);border:1px solid var(--borde);border-radius:8px;padding:9px 10px;min-height:44px}
+.nota-caja textarea{resize:vertical}
+.nota-cuando{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.nota-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.nota-chips .btn{min-height:36px;padding:6px 12px}
+.nota-maqs{display:grid;gap:4px;max-height:150px;overflow:auto;border:1px solid var(--borde);border-radius:8px;padding:6px}
+.nota-maqs label{display:flex;gap:8px;align-items:center;min-height:30px}
+.nota-pie{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.nota-pie .btn{min-height:44px;padding:8px 16px}
+.nota-pie .sep{flex:1}
+.nota-err{color:var(--err);font-size:13px;margin-top:8px;min-height:1em}
+.nota-caja input[type=text]{width:100%;box-sizing:border-box;font:inherit;font-size:16px;color:var(--texto);background:var(--panel);border:1px solid var(--borde);border-radius:8px;padding:9px 10px;min-height:44px}
+.nota-caja .dato{font-size:13px;color:var(--suave);margin:2px 0}
+.mr-maq-opc{position:relative;align-self:center}
+.mr-maq-opc>button{width:22px;height:22px;padding:0;line-height:1;border:1px solid transparent;background:transparent;color:var(--tenue);border-radius:6px;cursor:pointer;font-size:15px}
+.mr-maq-opc>button:hover,.mr-maq-opc.abierto>button{border-color:var(--borde);background:var(--grid);color:var(--texto)}
+.mr-maq-opc>button:focus-visible{outline:2px solid var(--acento);outline-offset:1px}
+.mr-maq-opc .mr-menu{position:absolute;top:26px;left:0;z-index:8;min-width:170px;background:var(--panel);border:1px solid var(--borde);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);padding:4px;display:none}
+.mr-maq-opc.abierto .mr-menu{display:block}
+.mr-menu button{display:block;width:100%;text-align:left;background:transparent;border:0;border-radius:6px;padding:7px 9px;font:inherit;font-size:13px;font-weight:400;cursor:pointer;color:var(--texto)}
+.mr-menu button:hover{background:var(--grid)}
+.reg-caja{width:min(940px,100%)}
+.reg-cab{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.reg-cab h3{margin:0;flex:1;min-width:200px}
+.reg-cab .btn{min-height:34px;padding:4px 10px}
+.reg-sub{font-size:13px;color:var(--suave);margin-bottom:8px}
+.reg-filtros{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.reg-filtros select{font:inherit;font-size:13px;color:var(--texto);background:var(--panel);border:1px solid var(--borde);border-radius:8px;padding:4px 8px}
+.reg-f{border:1px solid var(--borde);background:transparent;color:var(--suave);border-radius:999px;padding:3px 11px;font:inherit;font-size:12px;cursor:pointer}
+.reg-f[aria-pressed=true]{color:var(--acento-t);background:var(--acento);border-color:var(--acento);font-weight:600}
+.reg-tabla{max-height:min(55vh,460px);overflow:auto;border:1px solid var(--borde);border-radius:10px}
+.reg-tabla table{border-collapse:collapse;width:100%;font-size:13px}
+.reg-tabla th,.reg-tabla td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--grid);vertical-align:top}
+.reg-tabla th{position:sticky;top:0;background:var(--panel);color:var(--tenue);font-size:11px;letter-spacing:.06em;text-transform:uppercase;box-shadow:0 1px 0 var(--borde)}
+.reg-tabla td.n,.reg-tabla th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.reg-tabla td.h{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--suave)}
+.reg-tabla td.m{overflow-wrap:anywhere;min-width:200px}
+.reg-tabla .t-OK{color:var(--verde);font-weight:600}.reg-tabla .t-ERROR{color:var(--err);font-weight:600}.reg-tabla .t-EVENTO{color:#d97706;font-weight:600}.reg-tabla .t-INICIO{color:var(--ev);font-weight:600}.reg-tabla .t-inc{color:var(--tenue)}
+.reg-tabla .vacio{text-align:center;padding:22px 8px}
+.reg-nota{font-size:12px;color:var(--tenue);margin-top:8px}
 </style>
 <style id="estilos-reporte">
 .mr{--col-lbl:170px;--col-tot:118px;position:relative}
@@ -554,6 +865,12 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
 .mr-marca{position:absolute;top:-1px;bottom:-1px;width:2px;margin-left:-1px;z-index:3}
 .mr-marca.ev{background:var(--ev)}
 .mr-marca.ini{background:var(--ini)}
+.mr-marca.nota{background:var(--nota,#f59e0b);opacity:.85}
+.mr-pista.con-nota{overflow:visible}
+.mr-fila-nota{margin-top:11px}
+.mr-pista.anotable{-webkit-touch-callout:none}
+.mr-marca.nota .bandera{position:absolute;left:-1px;bottom:100%;margin-bottom:-1px;font-style:normal;font-size:15px;line-height:1;color:var(--nota,#f59e0b);cursor:help;padding:0 3px 0 0}
+.mr-marca.nota .bandera.edit{cursor:pointer}
 .mr-nodata{position:absolute;inset:0;display:flex;align-items:center;padding-left:8px;font-size:11px;color:var(--tenue)}
 .mr-tot{text-align:right;font-size:12px;font-variant-numeric:tabular-nums;padding-left:6px;white-space:nowrap}
 .mr-tot.cero{color:var(--tenue)}
@@ -805,33 +1122,54 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
     return res.sort(function (x, y) { return x.a - y.a; });
   }
 
-  /* Tramos de IP de una máquina en un día. La IP sale del evento INICIO
-     ("PC - usuario - adaptador - IP - versión"), de "Cambio de dirección IP: A -> B"
-     y de "Cambio de adaptador: A -> B - PC - usuario - adaptador - IP - versión".
+  /* IP que declara una fila del registro: { ip, antes } o null. Solo se miran los eventos que de verdad
+     traen la IP de la máquina (INICIO, cambio de IP, cambio de adaptador); el resto de mensajes puede
+     citar IP de destinos y no sirve. "antes" es la IP anterior cuando el propio evento la indica. */
+  var RX_IP = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g;
+  function ipDeFila(f) {
+    var msg = f[5] || '', m, r;
+    function ultima(txt) { var x = txt.match(RX_IP); return x ? x[x.length - 1] : null; }
+    if (f[2] === 'INICIO') { m = msg.match(RX_IP); return m ? { ip: m[0], antes: null } : null; }
+    if (f[2] !== 'EVENTO') return null;
+    m = /^Cambio de direcci[oó]n IP:\s*(.*?)\s*->\s*(.*)$/i.exec(msg);
+    if (m) { var n = ultima(m[2]); if (!n) return null; r = m[1].match(RX_IP); return { ip: n, antes: r ? r[0] : null }; }
+    m = /^Cambio de adaptador:\s*.*?->\s*(.*)$/i.exec(msg);
+    if (m) { var n2 = ultima(m[1]); return n2 ? { ip: n2, antes: null } : null; }
+    return null;
+  }
+
+  /* Tramos de IP de una máquina en un día. Orden de prioridad para saber en qué IP se observa:
+     1) lo que dicen los registros del propio día (INICIO / cambio de IP / cambio de adaptador, y la IP
+        anterior que indica un "A -> B");
+     2) si el día no trae ninguno, la última IP conocida de días anteriores ("previa").
      El primer tramo arranca en el primer registro del día y el último llega hasta el final de la cobertura. */
-  function ipsDia(filasPc, cobertura) {
-    var rx = /\b\d{1,3}(?:\.\d{1,3}){3}\b/g, cambios = [], desde = null, hasta = 0;
-    function ultima(txt) { var r = txt.match(rx); return r ? r[r.length - 1] : null; }
+  function ipsDia(filasPc, cobertura, previa) {
+    var cambios = [], desde = null, hasta = 0;
     filasPc.forEach(function (f) {
-      var s = secs(f[1]), msg = f[5] || '', ip = null, m;
+      var s = secs(f[1]), d = ipDeFila(f);
       if (desde === null || s < desde) desde = s;
-      if (f[2] === 'INICIO') { m = msg.match(rx); if (m) ip = m[0]; }
-      else if (f[2] === 'EVENTO') {
-        m = /^Cambio de direcci[oó]n IP:\s*.*?->\s*(.*)$/i.exec(msg);
-        if (!m) m = /^Cambio de adaptador:\s*.*?->\s*(.*)$/i.exec(msg);
-        if (m) ip = ultima(m[1]);
-      }
-      if (ip) cambios.push({ s: s, ip: ip });
+      if (d) cambios.push({ s: s, ip: d.ip, antes: d.antes });
     });
     cobertura.forEach(function (c) { if (c.b > hasta) hasta = c.b; });
-    if (!cambios.length) return [];
+    if (desde === null) return [];
     cambios.sort(function (x, y) { return x.s - y.s; });
-    var fin = Math.max(hasta, cambios[cambios.length - 1].s), tramos = [];
-    cambios.forEach(function (c, i) {
-      var a = i === 0 ? Math.min(desde, c.s) : c.s, b = i + 1 < cambios.length ? cambios[i + 1].s : fin;
+    var tramos = [];
+    function poner(a, b, ip) {
       var u = tramos[tramos.length - 1];
-      if (u && u.ip === c.ip) { u.b = b; return; }
-      if (b > a) tramos.push({ a: a, b: b, ip: c.ip });
+      if (u && u.ip === ip) { u.b = Math.max(u.b, b); return; }
+      if (b > a) tramos.push({ a: a, b: b, ip: ip });
+    }
+    if (!cambios.length) {
+      if (!previa) return [];
+      poner(desde, Math.max(hasta, desde), previa);
+      return tramos;
+    }
+    var fin = Math.max(hasta, cambios[cambios.length - 1].s);
+    var inicial = cambios[0].antes || previa || cambios[0].ip;
+    if (cambios[0].s > desde) poner(desde, cambios[0].s, inicial);
+    cambios.forEach(function (c, i) {
+      var a = (i === 0 && cambios[0].s <= desde) ? Math.min(desde, c.s) : c.s;
+      poner(a, i + 1 < cambios.length ? cambios[i + 1].s : fin, c.ip);
     });
     return tramos;
   }
@@ -852,16 +1190,21 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
     opc.dias.forEach(function (d) { porDia[d] = { fecha: d, maquinas: [], errTotal: 0, caidas: 0, oculto: 0, hayDatos: false }; });
 
     datos.maquinas.forEach(function (m) {
-      var filasPorDia = {};
+      var filasPorDia = {}, histIp = [];
       m.destinos.forEach(function (de) {
         de.filas.forEach(function (f) {
+          var di = ipDeFila(f);
+          if (di) histIp.push({ k: f[0] + ' ' + f[1], f: f[0], ip: di.ip });
           if (!porDia[f[0]]) return;
           var fd = filasPorDia[f[0]] || (filasPorDia[f[0]] = {});
           (fd[de.destino] || (fd[de.destino] = [])).push(f);
         });
       });
+      histIp.sort(function (x, y) { return x.k < y.k ? -1 : x.k > y.k ? 1 : 0; });
       opc.dias.forEach(function (d) {
         var dia = porDia[d], fd = filasPorDia[d] || {};
+        var previa = m.ip_previa || null;   // última IP conocida antes del rango (la entrega la API)
+        for (var hi = 0; hi < histIp.length && histIp[hi].f < d; hi++) previa = histIp[hi].ip;
         var maq = { pc: m.pc, alias: m.alias, version: m.version || null, destinos: [], adapt: [], hayDatos: false, caidas: 0, completa: false };
         var todas = [], cobertura = [], crudos = [];
         m.destinos.forEach(function (de) {
@@ -872,7 +1215,10 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
           crudos.push({ destino: de.destino, filas: filas, r: r });
         });
         maq.adapt = adaptadoresDia(todas, unir(cobertura));
-        maq.ips = ipsDia(todas, cobertura);
+        maq.ips = ipsDia(todas, cobertura, previa);
+        maq.notas = ((datos.notas && datos.notas[m.pc]) || []).filter(function (n) { return n[1] === d; }).map(function (n) {
+          return { id: n[0], fecha: n[1], hora: n[2], s: secs(n[2]), texto: n[3], pc: m.pc, alias: m.alias };
+        });
         var completa = crudos.length > 0;
         crudos.forEach(function (c) {
           var piezas = [], err = 0, ok = 0, oculto = 0, cuentan = {}, cubierto = [];
@@ -1015,6 +1361,36 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
 
   var NOMBRE_TIPO = { OK: 'Conectado', ERROR: 'Sin conexión', INC: 'Incompleto' };
 
+  /* Botón «⋮» junto al nombre del equipo (solo en la página, no en el HTML descargado):
+     opc.accionesMaquina = [[id, texto], …] y opc.onMaquina(id, maq, fecha). */
+  function cerrarMenusMaq() {
+    var a = document.querySelectorAll('.mr-maq-opc.abierto');
+    for (var i = 0; i < a.length; i++) { a[i].classList.remove('abierto'); a[i].firstChild.setAttribute('aria-expanded', 'false'); }
+  }
+  function menuMaquina(m, dia, opc) {
+    var caja = el('span', 'mr-maq-opc'), btn = el('button', null, '⋮'), menu = el('div', 'mr-menu');
+    btn.type = 'button'; btn.title = 'Opciones de este equipo'; btn.setAttribute('aria-haspopup', 'true'); btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-label', 'Opciones de ' + (m.alias || m.pc));
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      var abierto = caja.classList.contains('abierto');
+      cerrarMenusMaq();
+      if (!abierto) { caja.classList.add('abierto'); btn.setAttribute('aria-expanded', 'true'); }
+    };
+    opc.accionesMaquina.forEach(function (a) {
+      var b = el('button', null, a[1]); b.type = 'button';
+      b.onclick = function (e) { e.stopPropagation(); cerrarMenusMaq(); opc.onMaquina(a[0], m, dia.fecha); };
+      menu.appendChild(b);
+    });
+    caja.appendChild(btn); caja.appendChild(menu);
+    if (!window._mrMenuDoc) {
+      window._mrMenuDoc = true;
+      document.addEventListener('click', cerrarMenusMaq);
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') cerrarMenusMaq(); });
+    }
+    return caja;
+  }
+
   function dibujarDia(dia, opc) {
     var ini = opc.ini, fin = opc.fin;
     var sec = el('section', 'mr-dia');
@@ -1056,6 +1432,7 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
       var vb = verBadge(m.version); if (vb) nom.appendChild(vb);
       if (m.alias && m.alias !== m.pc) nom.appendChild(el('small', null, m.pc));
       if (m.completa) nom.appendChild(el('small', 'ok', '✓ sin caídas'));
+      if (opc.onMaquina && opc.accionesMaquina && opc.accionesMaquina.length) nom.appendChild(menuMaquina(m, dia, opc));
       bloque.appendChild(nom);
 
       if (m.ips && m.ips.length) {
@@ -1074,13 +1451,14 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
         bloque.appendChild(fi);
       }
 
+      var notasDia = (m.notas || []).filter(function (n) { return n.s >= ini && n.s <= fin; });
       if (!m.destinos.length) {
         var fv = el('div', 'mr-fila'); fv.appendChild(el('div', 'mr-lbl', '—'));
         var pv = pista(ini, fin); pv.appendChild(el('div', 'mr-nodata', 'sin registros')); fv.appendChild(pv);
         fv.appendChild(el('div', 'mr-tot cero', '—')); bloque.appendChild(fv);
       }
-      m.destinos.forEach(function (de) {
-        var f = el('div', 'mr-fila');
+      m.destinos.forEach(function (de, di) {
+        var f = el('div', 'mr-fila' + (di === 0 && notasDia.length ? ' mr-fila-nota' : ''));
         var lbl = el('div', 'mr-lbl', de.destino); lbl.title = de.destino;
         f.appendChild(lbl);
         var p = pista(ini, fin);
@@ -1110,6 +1488,44 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
             p.appendChild(k);
           });
         }
+        if (di === 0 && notasDia.length) p.classList.add('con-nota');
+        if (opc.onNuevaNota) {
+          p.classList.add('anotable');
+          var pedir = function (clientX) {
+            var r = p.getBoundingClientRect();
+            if (!r.width) return;
+            var fr = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+            opc.onNuevaNota({ pc: m.pc, alias: m.alias, fecha: dia.fecha, s: ini + fr * (fin - ini) });
+          };
+          p.addEventListener('contextmenu', function (e) {
+            if (e.target.closest && e.target.closest('.bandera')) return;
+            e.preventDefault(); pedir(e.clientX);
+          });
+          var t0 = null, tx = 0, ty = 0;   // pulsación larga en pantalla táctil
+          p.addEventListener('touchstart', function (e) {
+            if (e.touches.length !== 1) return;
+            tx = e.touches[0].clientX; ty = e.touches[0].clientY;
+            clearTimeout(t0); t0 = setTimeout(function () { t0 = null; pedir(tx); }, 600);
+          }, { passive: true });
+          p.addEventListener('touchmove', function (e) {
+            var t = e.touches[0];
+            if (Math.abs(t.clientX - tx) > 10 || Math.abs(t.clientY - ty) > 10) { clearTimeout(t0); t0 = null; }
+          }, { passive: true });
+          ['touchend', 'touchcancel'].forEach(function (ev) { p.addEventListener(ev, function () { clearTimeout(t0); t0 = null; }); });
+        }
+        notasDia.forEach(function (n) {
+          var k = el('div', 'mr-marca nota');
+          k.style.left = pct(n.s, ini, fin) + '%';
+          var tipN = '\u2691 ' + hhmmss(n.s) + '\n' + n.texto + (opc.onNota && di === 0 ? '\n(clic en la bandera: editar o borrar)' : '');
+          k.setAttribute('data-tip', tipN);
+          if (di === 0) {
+            var bd = el('i', 'bandera' + (opc.onNota ? ' edit' : ''), '\u2691');
+            bd.setAttribute('data-tip', tipN);
+            if (opc.onNota) bd.onclick = function () { opc.onNota(n); };
+            k.appendChild(bd);
+          }
+          p.appendChild(k);
+        });
         f.appendChild(p);
         var tot = el('div', 'mr-tot ' + (de.err > 0 ? 'hay' : 'cero'));
         if (!de.hayDatos || de.soloOculto) tot.textContent = '—';
@@ -1190,6 +1606,7 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
     if (opc.redes.wifi) it('repeating-linear-gradient(135deg,var(--ok-wifi) 0 3px,transparent 3px 5px)', 'Por Wi-Fi (bandeado)');
     var sd = el('span'), isd = el('i'); isd.style.boxShadow = 'inset 0 0 0 1px var(--borde)'; sd.appendChild(isd); sd.appendChild(document.createTextNode('Sin datos')); l.appendChild(sd);
     if (opc.eventos) { it('var(--ev)', 'Evento de red', 'tk'); it('var(--ini)', 'Inicio del monitor', 'tk'); }
+    if (opc.hayNotas) it('var(--nota,#f59e0b)', 'Nota manual (bitácora)', 'tk');
     if (opc.coincidencias) it('var(--coin)', 'Coincidencia (2+ máquinas caídas a la vez)');
     return l;
   }
@@ -1233,6 +1650,7 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
     cab.appendChild(el('span', 'meta', 'Horario ' + hhmm(opc.ini) + '–' + hhmm(opc.fin) + ' · ' + nMaq + (nMaq === 1 ? ' máquina' : ' máquinas') + ' · ' + dias.length + (dias.length === 1 ? ' día' : ' días')));
     cab.appendChild(barraRedes(datos, opc, raiz, dias));
     raiz.appendChild(cab);
+    opc.hayNotas = !!(datos.notas && Object.keys(datos.notas).length);
     raiz.appendChild(leyenda(opc));
 
     if (!nMaq) { raiz.appendChild(el('div', 'vacio', 'Las máquinas seleccionadas no tienen registros en el periodo.')); return; }
@@ -1576,6 +1994,10 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
   function opciones() {
     var n = new Date();
     return {
+      onNota: puedeNotas ? abrirNota : null,
+      onNuevaNota: puedeNotas ? function (pre) { abrirNota(null, pre); } : null,
+      accionesMaquina: (puedeNotas ? [['nombre', 'Editar nombre']] : []).concat([['registro', 'Ver registro']]),
+      onMaquina: function (id, m, fecha) { if (id === 'nombre') abrirNombre(m.pc); else abrirRegistro(m.pc, fecha); },
       dias: diasElegidos(), ini: estado.ini, fin: estado.fin,
       coincidencias: $('optCoin').checked, redes: estado.redes, eventos: $('optEventos').checked, vacias: $('optVacias').checked,
       ahora: { fecha: hoyISO(), s: n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds() },
@@ -1583,6 +2005,271 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
       generado: hoyISO() + ' ' + pad(n.getHours()) + ':' + pad(n.getMinutes())
     };
   }
+  // ---- Bitácora: notas manuales sobre la línea de tiempo ------------------------------
+  var puedeNotas = $('maqs').dataset.puedeEliminar === '1';
+  function fechaLocal(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function horaLocal(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function enviarNota(accion, cuerpo) {
+    cuerpo.csrf = $('maqs').dataset.csrf;
+    return fetch('index.php?accion=' + accion, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok || !j.ok) throw new Error(j.error || ('Error HTTP ' + r.status));
+        return j;
+      });
+    });
+  }
+  function recargarNotas(fechaNota) {
+    if (!estado.datos) { aviso('Nota guardada. Genere el gráfico para verla.'); return; }
+    var pcs = estado.datos.maquinas.map(function (m) { return m.pc; });
+    if (!pcs.length) return;
+    api({ accion: 'notas', desde: estado.desde, hasta: estado.hasta, 'pc[]': pcs }).then(function (j) {
+      estado.datos.notas = j.notas;
+      rerender();
+      aviso(fechaNota && (fechaNota < estado.desde || fechaNota > estado.hasta) ? 'Nota guardada (cae fuera de la semana que se está viendo).' : 'Nota guardada.');
+    }).catch(function (e) { aviso(e.message, true); });
+  }
+  function cerrarNota() { var f = document.querySelector('.nota-fondo'); if (f) f.remove(); }
+  function abrirNota(nota, pre) {
+    cerrarNota();
+    var edit = !!(nota && nota.id);
+    var fondo = document.createElement('div'); fondo.className = 'nota-fondo';
+    var caja = document.createElement('div'); caja.className = 'nota-caja'; fondo.appendChild(caja);
+    caja.innerHTML =
+      '<h3></h3><div id="nMaqBox"></div>' +
+      '<label class="etq2" for="nTexto">Nota (breve)</label>' +
+      '<textarea id="nTexto" rows="3" maxlength="300" placeholder="Ej.: desconecté el switch del lab / cambié el cable para una prueba"></textarea>' +
+      '<label class="etq2">Cuándo ocurrió</label>' +
+      '<div class="nota-cuando"><input type="date" id="nFecha"><input type="time" id="nHora"></div>' +
+      '<div class="nota-chips"></div><div class="nota-err" id="nErr"></div>' +
+      '<div class="nota-pie"><button class="btn prim" id="nGuardar" type="button">Guardar</button>' +
+      '<button class="btn" id="nCancelar" type="button">Cancelar</button><span class="sep"></span></div>';
+    caja.querySelector('h3').textContent = edit ? 'Editar nota · ' + (nota.alias || nota.pc) : (pre ? 'Nueva nota · ' + (pre.alias || pre.pc) : 'Nueva nota en la bitácora');
+    var texto = caja.querySelector('#nTexto'), fe = caja.querySelector('#nFecha'), ho = caja.querySelector('#nHora'), err = caja.querySelector('#nErr');
+    var ahora = new Date();
+    fe.value = edit ? nota.fecha : (pre ? pre.fecha : fechaLocal(ahora));
+    ho.value = edit ? nota.hora.slice(0, 5) : (pre ? pad(Math.floor(pre.s / 3600)) + ':' + pad(Math.floor(pre.s % 3600 / 60)) : horaLocal(ahora));
+    if (edit) texto.value = nota.texto;
+
+    // Máquinas (solo al crear): por defecto las que están seleccionadas en el formulario
+    var checks = [];
+    if (!edit) {
+      var box = caja.querySelector('#nMaqBox');
+      var et = document.createElement('label'); et.className = 'etq2'; et.textContent = 'Máquinas observadas'; box.appendChild(et);
+      var lista = document.createElement('div'); lista.className = 'nota-maqs'; box.appendChild(lista);
+      estado.maquinas.forEach(function (m) {
+        var l = document.createElement('label'), c = document.createElement('input'); c.type = 'checkbox'; c.checked = pre ? m.pc === pre.pc : !!estado.seleccion[m.pc]; c.value = m.pc;
+        l.appendChild(c); l.appendChild(document.createTextNode(' ' + (m.alias && m.alias !== m.pc ? m.alias + ' (' + m.pc + ')' : m.pc)));
+        lista.appendChild(l); checks.push(c);
+      });
+      if (!checks.length) lista.textContent = 'No hay máquinas con registros en el rango.';
+    }
+
+    // Ajuste rápido de la hora (cómodo desde el teléfono)
+    function mover(min) {
+      var base = new Date((fe.value || fechaLocal(ahora)) + 'T' + (ho.value || '00:00') + ':00');
+      if (isNaN(base)) base = new Date();
+      base.setMinutes(base.getMinutes() + min);
+      fe.value = fechaLocal(base); ho.value = horaLocal(base);
+    }
+    var chips = caja.querySelector('.nota-chips');
+    [['Ahora', null], ['−5 min', -5], ['−15 min', -15], ['−30 min', -30], ['−1 h', -60], ['+5 min', 5]].forEach(function (c) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'btn chico'; b.textContent = c[0];
+      b.onclick = function () { if (c[1] === null) { var n = new Date(); fe.value = fechaLocal(n); ho.value = horaLocal(n); } else mover(c[1]); };
+      chips.appendChild(b);
+    });
+
+    var pie = caja.querySelector('.nota-pie');
+    if (edit) {
+      var del = document.createElement('button'); del.type = 'button'; del.className = 'btn'; del.textContent = 'Eliminar';
+      del.onclick = function () {
+        if (!confirm('¿Eliminar esta nota?')) return;
+        del.disabled = true;
+        enviarNota('nota_borrar', { id: nota.id }).then(function () { cerrarNota(); recargarNotas(nota.fecha); })
+          .catch(function (e) { err.textContent = e.message; del.disabled = false; });
+      };
+      pie.appendChild(del);
+    }
+    caja.querySelector('#nCancelar').onclick = cerrarNota;
+    fondo.addEventListener('mousedown', function (e) { if (e.target === fondo) cerrarNota(); });
+    caja.querySelector('#nGuardar').onclick = function () {
+      var pcs = checks.filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+      err.textContent = '';
+      if (!edit && !pcs.length) { err.textContent = 'Seleccione al menos una máquina.'; return; }
+      if (!texto.value.trim()) { err.textContent = 'Escriba la nota.'; texto.focus(); return; }
+      if (!fe.value || !ho.value) { err.textContent = 'Indique fecha y hora.'; return; }
+      var btn = this; btn.disabled = true;
+      var cuerpo = { fecha: fe.value, hora: ho.value, texto: texto.value };
+      if (edit) cuerpo.id = nota.id; else cuerpo.pcs = pcs;
+      enviarNota('nota_guardar', cuerpo).then(function () { cerrarNota(); recargarNotas(fe.value); })
+        .catch(function (e) { err.textContent = e.message; btn.disabled = false; });
+    };
+    document.addEventListener('keydown', function esc(e) {
+      if (!document.body.contains(fondo)) { document.removeEventListener('keydown', esc); return; }
+      if (e.key === 'Escape') cerrarNota();
+    });
+    document.body.appendChild(fondo);
+    texto.focus();
+  }
+  // ---- Menú «⋮» del equipo: editar nombre y ver el registro del día --------------------
+  function durHMS(s) { s = Math.round(s); return pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60); }
+  function segHora(h) { var p = h.split(':'); return (+p[0]) * 3600 + (+p[1]) * 60 + (+p[2] || 0); }
+  function esc2(fondo) {
+    document.addEventListener('keydown', function esc(e) {
+      if (!document.body.contains(fondo)) { document.removeEventListener('keydown', esc); return; }
+      if (e.key === 'Escape') cerrarNota();
+    });
+    fondo.addEventListener('mousedown', function (e) { if (e.target === fondo) cerrarNota(); });
+  }
+  function buscarMaquina(pc) {
+    var r = null;
+    [estado.maquinas, estado.datos ? estado.datos.maquinas : []].forEach(function (a) { a.forEach(function (x) { if (!r && x.pc === pc) r = x; }); });
+    return r;
+  }
+
+  // Filas del día de un equipo tal como las guarda el monitor (mismo criterio que la consola local):
+  // los EVENTO/INICIO repetidos en varios destinos se unen en una sola fila «todos».
+  function filasRegistro(m, fecha) {
+    var esHoy = fecha === hoyISO(), lista = [], grupos = {}, seq = 0;
+    m.destinos.forEach(function (de) {
+      var fs = de.filas.filter(function (f) { return f[0] === fecha; });
+      fs.forEach(function (f, i) {
+        seq++;
+        var tipo = f[2], o = { dest: de.destino, f: f, n: 1, seq: seq, seg: segHora(f[1]), tiempo: '', lat: '', inc: false };
+        if (tipo === 'EVENTO' || tipo === 'INICIO') {
+          var k = f[1] + '|' + tipo + '|' + (f[5] || '');
+          if (grupos[k]) { grupos[k].n++; return; }
+          grupos[k] = o;
+        } else {
+          o.lat = '--';
+          if (f[3] !== null) { o.tiempo = durHMS(f[3]); if (tipo === 'OK' && f[4] !== null) o.lat = f[4] + ' ms'; }
+          else {
+            var cierra = false;
+            for (var j = i + 1; j < fs.length; j++) if (fs[j][2] !== 'EVENTO') { cierra = true; break; }
+            if (!cierra && esHoy) o.tiempo = 'en curso'; else { o.tiempo = 'incompleto'; o.inc = true; }
+          }
+        }
+        lista.push(o);
+      });
+    });
+    lista.sort(function (a, b) { return b.seg - a.seg || b.seq - a.seq; });
+    return lista;
+  }
+
+  function abrirRegistro(pc, fecha) {
+    cerrarNota();
+    var m = estado.datos && estado.datos.maquinas.filter(function (x) { return x.pc === pc; })[0];
+    if (!m) return;
+    var dias = diasElegidos(), idx = dias.indexOf(fecha);
+    if (idx < 0) { dias = [fecha]; idx = 0; }
+    var filtro = 'todos', dest = '', MAX = 500;
+    var fondo = document.createElement('div'); fondo.className = 'nota-fondo';
+    var caja = document.createElement('div'); caja.className = 'nota-caja reg-caja'; fondo.appendChild(caja);
+    caja.innerHTML =
+      '<div class="reg-cab"><button class="btn" id="rAnt" type="button" aria-label="Día anterior">‹</button><h3></h3><button class="btn" id="rSig" type="button" aria-label="Día siguiente">›</button></div>' +
+      '<div class="reg-sub"></div><div class="reg-filtros"></div>' +
+      '<div class="reg-tabla" tabindex="0" aria-label="Registro del día"><table><thead><tr><th>Hora</th><th>Destino</th><th>Tipo</th><th class="n">Tiempo</th><th class="n">Lat.</th><th>Mensaje</th></tr></thead><tbody></tbody></table></div>' +
+      '<div class="reg-nota"></div><div class="nota-pie"><span class="sep"></span><button class="btn" id="rCerrar" type="button">Cerrar</button></div>';
+    var h3 = caja.querySelector('h3'), sub = caja.querySelector('.reg-sub'), filtros = caja.querySelector('.reg-filtros'),
+        tb = caja.querySelector('tbody'), nota = caja.querySelector('.reg-nota'), ant = caja.querySelector('#rAnt'), sig = caja.querySelector('#rSig');
+
+    function pintarFiltros() {
+      filtros.textContent = '';
+      FILTROS_REG.forEach(function (f) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'reg-f'; b.textContent = f[1];
+        b.setAttribute('aria-pressed', filtro === f[0] ? 'true' : 'false');
+        b.onclick = function () { filtro = f[0]; pintarFiltros(); pintar(); };
+        filtros.appendChild(b);
+      });
+      if (m.destinos.length > 1) {
+        var sel = document.createElement('select'); sel.setAttribute('aria-label', 'Destino');
+        var o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'Todos los destinos'; sel.appendChild(o0);
+        m.destinos.forEach(function (d) { var o = document.createElement('option'); o.value = d.destino; o.textContent = d.destino; sel.appendChild(o); });
+        sel.value = dest; sel.onchange = function () { dest = sel.value; pintar(); };
+        filtros.appendChild(sel);
+      }
+    }
+    function pintar() {
+      var f = dias[idx], lista = filasRegistro(m, f);
+      var vis = lista.filter(function (o) {
+        return (filtro === 'todos' || o.f[2] === filtro) && (!dest || o.n > 1 || o.dest === dest);
+      });
+      h3.textContent = 'Registro · ' + (m.alias || m.pc);
+      sub.textContent = MR.fechaLarga(f) + (m.alias && m.alias !== m.pc ? ' · ' + m.pc : '') + ' · ' + lista.length + (lista.length === 1 ? ' registro' : ' registros');
+      ant.disabled = idx <= 0; sig.disabled = idx >= dias.length - 1;
+      tb.textContent = '';
+      var frag = document.createDocumentFragment();
+      vis.slice(0, MAX).forEach(function (o) {
+        var tr = document.createElement('tr'), tipo = o.f[2];
+        function td(cls, txt) { var c = document.createElement('td'); if (cls) c.className = cls; c.textContent = txt; tr.appendChild(c); }
+        td('h', o.f[1]); td('', o.n > 1 ? 'todos' : o.dest);
+        td(o.inc ? 't-inc' : 't-' + tipo, tipo); td('n', o.tiempo); td('n', o.lat); td('m' + (o.inc ? ' t-inc' : ''), o.f[5] || '');
+        frag.appendChild(tr);
+      });
+      tb.appendChild(frag);
+      if (!vis.length) {
+        var tr0 = document.createElement('tr'), c0 = document.createElement('td'); c0.colSpan = 6; c0.className = 'vacio';
+        c0.textContent = lista.length ? 'Sin registros con este filtro.' : 'Sin registros este día.'; tr0.appendChild(c0); tb.appendChild(tr0);
+      }
+      nota.textContent = (vis.length > MAX ? 'Mostrando los ' + MAX + ' más recientes de ' + vis.length + '. ' : '') +
+        'Cómo leer la barra: cada fila OK o ERROR abre un tramo que dura el «Tiempo» y la barra lo pinta (verde = OK, rojo = ERROR) desde su hora. ' +
+        '«en curso» llega hasta el último envío y no se suma; «incompleto» (sin cierre) queda en blanco. Horario del análisis: ' +
+        MR.hhmm(estado.ini) + '–' + MR.hhmm(estado.fin) + '.';
+    }
+    ant.onclick = function () { if (idx > 0) { idx--; pintar(); } };
+    sig.onclick = function () { if (idx < dias.length - 1) { idx++; pintar(); } };
+    caja.querySelector('#rCerrar').onclick = cerrarNota;
+    esc2(fondo);
+    pintarFiltros(); pintar();
+    document.body.appendChild(fondo);
+    caja.querySelector('#rCerrar').focus();
+  }
+
+  function abrirNombre(pc) {
+    cerrarNota();
+    var m = buscarMaquina(pc); if (!m) return;
+    var fondo = document.createElement('div'); fondo.className = 'nota-fondo';
+    var caja = document.createElement('div'); caja.className = 'nota-caja'; fondo.appendChild(caja);
+    caja.innerHTML =
+      '<h3>Editar nombre</h3><div class="dato" id="eEquipo"></div>' +
+      '<label class="etq2" for="eNombre">Nombre del equipo (se muestra en el panel)</label>' +
+      '<input type="text" id="eNombre" maxlength="150" autocomplete="off">' +
+      '<div class="nota-err" id="eErr"></div>' +
+      '<div class="nota-pie"><button class="btn prim" id="eGuardar" type="button">Guardar</button>' +
+      '<button class="btn" id="eCancelar" type="button">Cancelar</button><span class="sep"></span></div>' +
+      '<div class="reg-nota">El cambio se ve aquí al instante. El equipo lo adopta en su próxima sincronización de configuración remota (al terminar su siguiente envío de datos) y vuelve a enviar los datos con el nombre nuevo.</div>';
+    caja.querySelector('#eEquipo').textContent = 'Equipo (nombre de Windows): ' + m.pc;
+    var inp = caja.querySelector('#eNombre'), err = caja.querySelector('#eErr');
+    inp.value = m.alias || m.pc;
+    caja.querySelector('#eGuardar').onclick = function () {
+      var v = inp.value.replace(/\s+/g, ' ').trim(), btn = this;
+      if (!v) { err.textContent = 'Escriba el nombre del equipo.'; inp.focus(); return; }
+      if (v === (m.alias || m.pc)) { cerrarNota(); return; }   // sin cambios
+      err.textContent = ''; btn.disabled = true;
+      enviarNota('nombre_guardar', { pc: m.pc, nombre: v }).then(function (j) {
+        [estado.maquinas, estado.datos ? estado.datos.maquinas : []].forEach(function (a) {
+          a.forEach(function (x) { if (x.pc === j.pc) x.alias = j.alias; });
+        });
+        cerrarNota(); pintarMaquinas(); rerender();
+        aviso(j.instruccion ? 'Nombre actualizado. Se enviará al equipo en su próxima sincronización.' : 'Nombre actualizado en el panel, pero no se pudo enviar al equipo (su nombre no sirve como archivo de configuración remota).');
+      }).catch(function (e) { err.textContent = e.message; btn.disabled = false; });
+    };
+    caja.querySelector('#eCancelar').onclick = cerrarNota;
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); caja.querySelector('#eGuardar').click(); } });
+    esc2(fondo);
+    document.body.appendChild(fondo);
+    inp.focus(); inp.select();
+  }
+  var FILTROS_REG = [['todos', 'Todos'], ['ERROR', 'Caídas'], ['OK', 'Recuperaciones'], ['EVENTO', 'Eventos'], ['INICIO', 'Inicios']];
+
+  if (puedeNotas) {
+    var fab = document.createElement('button'); fab.type = 'button'; fab.className = 'nota-fab'; fab.textContent = '\u2691 Nota';
+    fab.title = 'Anotar en la bitácora (se marca como bandera en la línea de tiempo)';
+    fab.onclick = function () { abrirNota(null); };
+    document.body.appendChild(fab);
+  }
+
   function rerender() {
     if (!estado.datos) return;
     var o = opciones();
@@ -1599,7 +2286,7 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
     var clave = estado.desde + '|' + estado.hasta + '|' + pcs.join('|');
     var btn = this; btn.disabled = true; aviso('Consultando registros…');
     api({ accion: 'datos', desde: estado.desde, hasta: estado.hasta, 'pc[]': pcs }).then(function (j) {
-      estado.datos = { desde: j.desde, hasta: j.hasta, maquinas: j.maquinas };
+      estado.datos = { desde: j.desde, hasta: j.hasta, maquinas: j.maquinas, notas: j.notas || {} };
       // Máquinas seleccionadas sin filas: se muestran igual, vacías
       var tiene = {}; j.maquinas.forEach(function (m) { tiene[m.pc] = true; });
       estado.maquinas.forEach(function (m) {

@@ -160,7 +160,7 @@ Carpeta `api/`, desplegada en `https://mrv1.solucionesnicaragua.com/registros.ph
 }
 ```
 
-- Cada sección es **opcional**: la PC sobrescribe solo las que vengan y deja intactas las demás. Nunca hay credenciales FTP, token, URL ni alias.
+- Cada sección es **opcional**: la PC sobrescribe solo las que vengan y deja intactas las demás. Nunca hay credenciales FTP, token ni URL. Único dato de identidad permitido: `alias` (nombre del equipo), que escribe el panel de análisis con «Editar nombre» (no este formulario) y la PC adopta (ver el menú «⋮» en la lista de pendientes).
 - `revision` es la marca de tiempo Unix del guardado, forzada a ser mayor que la anterior de esa PC (`max(time(), anterior + 1)`): no retrocede aunque se borre y se recree el archivo. La PC solo aplica si `revision` es mayor a la que ya aplicó.
 - **Rangos** (constante `MR_Z_LIM`): intervalo 1–3600 s, confirmación 1–10, timeout 500–10000 ms, revisión de red 1–300 s, frecuencia de la API **5–720 min** (acotada para que la PC siempre vuelva a consultar y una instrucción errónea pueda corregirse), frecuencia FTP 5–1440 min, reintentos 1–10, hasta 8 destinos.
 
@@ -217,7 +217,8 @@ MRV1/backend/
 ├── .gitignore                   Excluye api/config/config.php (credenciales reales)
 ├── sql/
 │   ├── 001_crear_base.sql       Crea computadoras y registros (CREATE TABLE IF NOT EXISTS)
-│   └── 002_config_remota.sql    [v1.11] Columnas de confirmación de configuración remota (idempotente)
+│   ├── 002_config_remota.sql    [v1.11] Columnas de confirmación de configuración remota (idempotente)
+│   └── 003_notas.sql            Bitácora: notas manuales por PC, fecha y hora (idempotente)
 └── api/                          Desplegada en https://mrv1.solucionesnicaragua.com/
     ├── index.php                Formulario SPA de análisis semanal + endpoints GET de consulta
     ├── assets/                  Logos oficiales (kore_sula_claro.svg / kore_sula_oscuro.svg) — ver sección 10
@@ -253,6 +254,8 @@ El lado cliente (`Cargador_DB.ps1`, `Instalar_DB.ps1`, `Instalar_DB.bat`, `Desin
 - **[v1.11] Cliente de la configuración remota — listo:** `Sincronizar_Config.ps1` (descarga, valida, sobrescribe `monitor.json`/`ftp.json`/`db_api.json`, reinicia el monitor con la parada ordenada, ajusta los disparadores de `MRV1 FTP`/`MRV1 DB`, escribe el `EVENTO` y confirma la revisión), llamado al terminar `Cargador_DB.ps1` y en cada `INICIO`. Ver `sistema/MRV1.11.md` 10.6. Falta probar con una PC real contra `zombie.php`.
 - **[1.13.6] Actualización automática desde GitHub — lista, falta estrenarla:** reinstalar a mano las PC una vez con el paquete 1.13.6 (trae el actualizador y `sistema/update_pubkey.xml`), subir `actualizar.php` (solo informe de versiones) y publicar con `tools/Publicar_Actualizacion.bat` cuando se acuerde desplegar. Falta probar el reinicio y el rollback del monitor en una PC real. Ver 5.2.
 - **[v1.11] Desplegar en producción:** ejecutar `sql/002_config_remota.sql`, subir `zombie.php` y `zombie/` (con su `.htaccess`) y tener `reporte.clave` configurada (ya están en el repositorio, solo falta llevarlos al hosting).
+- **Bitácora de notas (manuales):** ejecutar `sql/003_notas.sql` y subir `api/index.php`. Se anota desde el botón flotante «⚑ Nota» del formulario (exige `reporte.clave`): una o varias PC, texto de hasta 300 caracteres, fecha y hora ajustables (chips −5/−15/−30/−60 min). Se dibuja como bandera en la línea de tiempo y una línea ámbar en cada destino; al hacer clic en la bandera se edita o elimina. Sin la tabla, el formulario funciona igual y avisa al guardar.
+- **Menú «⋮» por equipo (editar nombre / ver registro) [1.13.8]:** subir `api/index.php`, `api/zombie.php` y publicar la 1.13.8 (el cliente nuevo es el que adopta el nombre). No hay tablas nuevas. «Ver registro» abre una ventana con las filas del día tal como las guarda el monitor (filtros por tipo y destino, flechas para cambiar de día) y una nota de cómo leer la barra; no exige clave. «Editar nombre» (exige `reporte.clave`) cambia `computadoras.alias` al instante y deja en `api/zombie/config.<pc>.json` una instrucción con `"alias"`; `Sincronizar_Config.ps1` la escribe en `monitor.json` (sin reiniciar el monitor) y pide un envío a la API para que el nombre nuevo no sea revertido por el envío anterior. Si ya había una instrucción sin aplicar, se conservan sus secciones. La consola local de la PC muestra el nombre nuevo tras reiniciar el monitor.
 - **Recordatorio — optimizar cuándo se descarga la configuración** (hoy: al terminar la carga a la API y en cada `INICIO`; para una urgencia se pide reiniciar la estación).
 
 - Desplegar `api/index.php`, poner la clave de `reporte` en `config.php` del servidor y validar el gráfico con datos reales.

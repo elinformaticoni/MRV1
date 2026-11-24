@@ -97,6 +97,8 @@ function Test-UpdateRequest([long]$nowMs) {
             if (-not (Test-Path -LiteralPath (Join-Path $script:Root 'config\db_api.json'))) {
                 Write-DiagLog 'Se pidio enviar datos a la API desde la consola, pero esta PC no tiene la API habilitada.'
             } else {
+                # [v1.13.8] Pedido manual: se levanta la espera por rechazo del servidor (una sola peticion de prueba; si sigue rechazando, se vuelve a esperar).
+                Remove-Item -LiteralPath (Join-Path $script:DiagDir 'db_backoff.json') -Force -ErrorAction SilentlyContinue
                 $dbTask = Get-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue
                 $dbScript = Join-Path $script:Root 'bin\Cargador_DB.ps1'
                 if ($dbTask) { Start-ScheduledTask -TaskName 'MRV1 DB' -ErrorAction SilentlyContinue; Write-DiagLog 'Envio a la API solicitado desde la consola: se inicio la tarea MRV1 DB.' }

@@ -608,9 +608,11 @@ Componente independiente y **opcional**: si no se habilita en el instalador, MRV
 Se ejecuta al iniciar Windows y cada `runEveryMin` minutos (3 horas por defecto). En cada ejecución revisa tanto `logs\` como `logs\cargados\` (sin tocar ni mover nada de lo que administra `Cargador_FTP.ps1`):
 
 1. **Días anteriores (cerrados):** se leen y se envían **una sola vez**; una vez confirmados por la API se marcan como sincronizados en `diag\db_sync_state.json`, para no releerlos ni reenviarlos en corridas futuras.
-2. **Día en curso:** se reenvía completo en cada corrida, porque su última fila puede seguir cambiando (copia de lectura compartida, igual que hace el FTP, para no chocar con el monitor).
+2. **Día en curso:** la primera corrida del día lo envía completo; las siguientes reenvían solo desde dos filas antes de la última fila `OK`/`ERROR`, que es la única que el monitor puede seguir modificando (`diaEnCurso` en `diag\db_sync_state.json`) [1.13.8]. Se lee una copia de lectura compartida, igual que hace el FTP, para no chocar con el monitor.
 
-El envío es por **filas**, no por archivo: cada fila del CSV se traduce a un objeto JSON y se manda en lotes (`maxFilasPorEnvio`, 300 por defecto) por HTTPS, con el header `X-MR-Token` y TLS 1.2. La API deduplica del lado del servidor (ver 10.3), así reenviar el archivo del día en curso completo en cada corrida nunca genera filas repetidas.
+El envío es por **filas**, no por archivo: cada fila del CSV se traduce a un objeto JSON y se manda en lotes (`maxFilasPorEnvio`, 300 por defecto) por HTTPS, con el header `X-MR-Token` y TLS 1.2. La API deduplica del lado del servidor (ver 10.3), así reenviar filas ya enviadas (el solapamiento del día en curso) nunca genera filas repetidas.
+
+**Corrección importante en 1.13.8.** Hasta la 1.13.7, un archivo con 300 filas o menos (lo normal) se enviaba **una petición por fila**, porque PowerShell desenvolvía el único lote al devolverlo de `Get-Batches`; un día con 150 filas hacía 150 POST seguidos en cada corrida, más los archivos anteriores y 3 reintentos por fila ante un fallo. Eso, desde varias PC con la misma IP, es lo que las protecciones del servidor (Cloudflare o el firewall del hosting) toman por un ataque y responden con «403 Prohibido». Ahora cada archivo viaja en lotes de hasta `maxFilasPorEnvio` filas.
 
 ### 10.2 Configuración, log y estado
 
@@ -618,6 +620,14 @@ El envío es por **filas**, no por archivo: cada fila del CSV se traduce a un ob
 - El **alias** (nombre descriptivo del punto observado) se envía en **cada** carga, no solo cuando cambia — así el servidor lo mantiene al día solo, sin pasos manuales, y el primer envío fallido tras instalar se autocorrige en la siguiente corrida.
 - Log propio: `diag\db_worker.log` (misma rotación por tamaño que `ftp_worker.log`).
 - Estado propio para la consola: `Root\db_status.json` (última corrida, archivos sincronizados/fallidos, filas insertadas/actualizadas, próxima hora estimada) — mismo patrón que `ftp_status.json`; la consola lo muestra en el bloque «CARGAS AL SERVIDOR» (ver 8).
+
+### 10.2.1 Cuidado con las protecciones del servidor [1.13.8]
+
+- **User-Agent propio** (`MRV1-Cargador/x.y.z`, `MRV1-Config/x.y.z`, `MRV1-Actualizador`) y `Accept: application/json`; el de PowerShell por defecto suele ser marcado por las protecciones anti-bot.
+- **Corte ante rechazo:** si el servidor responde 401, 403 o 429, o algo que no es JSON de la API (página de Cloudflare, del hosting…), la corrida se detiene en el **primer** intento: sin reintentos ni más archivos. Se anota `diag\db_backoff.json` y no se vuelve a intentar hasta pasado un plazo creciente: 30 min, 1 h, 2 h… hasta la frecuencia normal (máximo 24 h; respeta `Retry-After`). `Sincronizar_Config.ps1` y `Actualizar_Script.ps1` también esperan. Un envío correcto borra la espera, y «Enviar datos ahora» la levanta para hacer una prueba (si sigue rechazando, vuelve a esperar). Los errores de validación de la API (422, etc.) **no** activan la espera y no detienen a los demás archivos; sin respuesta (red caída) se corta la corrida sin esperar plazo.
+- **Escalonado:** si Windows lleva menos de 15 minutos encendido, se espera un tiempo al azar (hasta 120 s en el cargador, 60 s en la sincronización de configuración, 90 s en el actualizador) para que un laboratorio entero no llegue a la vez. Los reintentos usan espera creciente con azar (≈2, 4, 8 s).
+- **Diagnóstico:** `diag\db_worker.log` guarda el código HTTP, el encabezado `Server`, el `CF-RAY` y los primeros 200 caracteres de la respuesta; la consola muestra «rechazado por Cloudflare» (o el servidor que sea) y la hora del próximo intento.
+- **Si el bloqueo persiste:** en Cloudflare, una regla WAF personalizada con acción *Omitir* para `/registros.php`, `/zombie.php` y `/actualizar.php` (condicionada a la cabecera `X-MR-Token` o al User-Agent `MRV1`), y revisar Seguridad → Eventos; en otro hosting, pedir una excepción de ModSecurity para esas rutas.
 
 ### 10.3 Backend (API + base de datos)
 
@@ -672,7 +682,7 @@ Al aplicar:
 3. Confirma la revisión aplicada al servidor (`POST zombie.php?accion=confirmar`), que la muestra como «Aplicada» / «Pendiente» por PC, y guarda el resultado en `diag\zombie_state.json` (si el servidor no respondió, la próxima corrida reintenta confirmar antes de seguir).
 4. `status.json` suma `configRevision` y `configAppliedAt` (leídos de `diag\zombie_state.json`); la consola los muestra bajo el adaptador, como «CONFIGURACIÓN REMOTA: rev. N (aplicada …)», solo si ya se aplicó alguna.
 
-**Cuándo corre:** en un proceso aparte (oculto, sin bloquear al que lo lanza), al terminar cada corrida de `Cargador_DB.ps1` (inicio de Windows y cada `runEveryMin`) y cada vez que el monitor escribe una fila `INICIO` (arranque y cambio de día). Para una urgencia se pide al usuario que reinicie la estación o ejecute manualmente el script. La nueva configuración **no** puede tocar credenciales FTP, token, URL ni alias. Reutiliza la URL (deriva `zombie.php` de la carpeta de `apiUrl`) y el token de `db_api.json`, así que una PC sin la API habilitada no recibe instrucciones (el monitor funciona igual).
+**Cuándo corre:** en un proceso aparte (oculto, sin bloquear al que lo lanza), al terminar cada corrida de `Cargador_DB.ps1` (inicio de Windows y cada `runEveryMin`) y cada vez que el monitor escribe una fila `INICIO` (arranque y cambio de día). Para una urgencia se pide al usuario que reinicie la estación o ejecute manualmente el script. La nueva configuración **no** puede tocar credenciales FTP, token ni URL. El alias solo cambia si la instrucción trae `alias` (lo manda el panel de análisis con «Editar nombre»): se escribe en `monitor.json` sin reiniciar el monitor y se pide un envío a la API (`MRV1 DB`) para publicarlo [1.13.8]. Reutiliza la URL (deriva `zombie.php` de la carpeta de `apiUrl`) y el token de `db_api.json`, así que una PC sin la API habilitada no recibe instrucciones (el monitor funciona igual).
 
 **Pendiente (recordatorio):** optimizar cuándo se descarga la configuración (hoy: en cada `INICIO` y al terminar la carga a la API; ver también `backend/IA.md` sección 9).
 
@@ -705,7 +715,7 @@ Cada PC detecta sola una versión nueva y la instala, sin reinstalar con `Instal
 
 **Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día), al terminar cada corrida de `Cargador_DB.ps1` y con el botón «Buscar y actualizar ahora» de la consola web; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
 
-**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.7**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
+**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.8**. La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
 
 **Seguimiento [1.13.1].** El resultado de cada consulta queda en `diag\update_state.json`; `Monitor_Red.ps1` lo publica en `status.json` (campo `update`: `result`, `lastCheck`, `remote`, `detail`, releído cada 20 s) y la consola web lo muestra en la tarjeta «Actualización de scripts», con una alerta si la última fue `revertida`, `error`, `firma_invalida` o `manifiesto_invalido`. Además `Actualizar_Script.ps1` informa al servidor la versión instalada y cada fallo (ver `backend/IA.md` 5.2), y `index.php` muestra esa versión junto al nombre de cada máquina.
 
@@ -798,7 +808,7 @@ Una versión es correcta si cumple como mínimo:
 
 **Configuración remota (si la API está habilitada) [v1.11]**
 - [ ] Sin `config\db_api.json`, `Sincronizar_Config.ps1` no hace ninguna solicitud (P3).
-- [ ] Una instrucción nueva (revisión mayor) se aplica solo en las secciones recibidas, sin tocar credenciales FTP, token, URL ni alias.
+- [ ] Una instrucción nueva (revisión mayor) se aplica solo en las secciones recibidas, sin tocar credenciales FTP, token ni URL (el alias solo si la instrucción trae `alias`).
 - [ ] Un valor fuera de rango no aplica nada de la instrucción y queda registrado en `zombie_worker.log`.
 - [ ] Cambiar destinos/`detection` reinicia el monitor con parada ordenada y deja el `EVENTO` de aplicación antes del nuevo `INICIO`.
 - [ ] Cambiar la frecuencia de `db`/`ftp` ajusta la tarea correspondiente sin reiniciar el monitor.

@@ -153,9 +153,11 @@ function Get-Bytes([string]$url, [string]$token) {
 
 function Send-Confirm([string]$baseUrl, [string]$token, [string]$version, [bool]$ok, [string]$detalle, [string]$resultado = '') {
     if ([string]::IsNullOrEmpty($baseUrl)) { return }   # sin API habilitada no hay a quien informar (la actualizacion no depende de eso)
+    # [v1.13.8] Si Cargador_DB.ps1 anoto que el servidor rechazo el envio, no se le informa hasta que pase el plazo.
+    try { $bk = Read-JsonFile (Join-Path $diagDir 'db_backoff.json'); if ($bk -and $bk.hasta -and ([datetime]$bk.hasta) -gt (Get-Date)) { Write-Log 'Servidor en espera por rechazo previo; no se informa la version ahora.'; return } } catch { }
     try {
         $body = [ordered]@{ pc = $pc; version = $version; ok = $ok; resultado = $resultado; detalle = $detalle; remota = [string]$script:RemotaVista } | ConvertTo-Json -Compress
-        Invoke-WebRequest -Uri ($baseUrl + '?accion=confirmar') -Method Post -Headers @{ 'X-MR-Token' = $token } `
+        Invoke-WebRequest -Uri ($baseUrl + '?accion=confirmar') -Method Post -Headers @{ 'X-MR-Token' = $token; 'Accept' = 'application/json' } -UserAgent 'MRV1-Actualizador' `
             -ContentType 'application/json; charset=utf-8' -Body ($utf8.GetBytes($body)) -TimeoutSec 20 -UseBasicParsing | Out-Null
         Set-Reportado $version $resultado
     } catch { Write-Log ('No se pudo informar la version al servidor: ' + $_.Exception.Message) }
@@ -249,7 +251,11 @@ try {
         try { $last = [datetime]::ParseExact([string]$prev.ultimaConsulta, 's', [System.Globalization.CultureInfo]::InvariantCulture) } catch { }
         if ($last -and (((Get-Date) - $last).TotalMinutes -lt $MIN_ENTRE_CONSULTAS_MIN)) { exit 0 }
     }
-    if (-not $Force) { Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum 20) }   # no coincidir con la sincronizacion de configuracion
+    if (-not $Force) {
+        $maxEspera = 20
+        try { if (((Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime).TotalMinutes -lt 15) { $maxEspera = 90 } } catch { }   # [v1.13.8] recien encendido: mas dispersion
+        Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum $maxEspera)
+    }   # no coincidir con la sincronizacion de configuracion
 
     # --- Origen: etiquetas del repositorio de GitHub (publico). config\update.json es opcional: repo, refsUrl y rawBase
     # permiten usar un fork o un servidor de prueba. Solo HTTPS (o localhost).

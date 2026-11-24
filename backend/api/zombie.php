@@ -16,8 +16,11 @@
  * .htaccess: nunca se sirven directo, así el token siempre controla el acceso).
  * Ver backend/IA.md sección 5.1.
  *
- * La instrucción NUNCA puede traer credenciales FTP, token, URL ni alias: solo
- * destinos, tiempos y frecuencias, dentro de los rangos de MR_Z_LIM.
+ * La instrucción NUNCA puede traer credenciales FTP, token ni URL: solo destinos,
+ * tiempos y frecuencias, dentro de los rangos de MR_Z_LIM. El único dato de
+ * identidad que puede llevar es "alias" (nombre del equipo), y no lo escribe este
+ * formulario sino el panel de análisis (index.php, «Editar nombre»); aquí solo se
+ * conserva si todavía no fue aplicado.
  */
 
 declare(strict_types=1);
@@ -409,9 +412,25 @@ function mr_z_aplicar(array $pcs, array $secciones, array &$errores): array
             // Revisión monótona por PC: aunque se borre y se vuelva a crear el archivo,
             // nunca retrocede (la PC solo aplica si la revisión es mayor a la que ya aplicó).
             $rev = max(time(), (int) ($ant['revision'] ?? 0) + 1);
+            // Un cambio de nombre (alias) mandado desde el panel y aún sin aplicar no se pierde.
+            $extra = [];
+            if (isset($ant['alias']) && is_string($ant['alias']) && $ant['alias'] !== '') {
+                $aplicada = 0;
+                try {
+                    $q = mr_db()->prepare('SELECT config_rev_aplicada FROM computadoras WHERE pc = ?');
+                    $q->execute([$pc]);
+                    $aplicada = (int) $q->fetchColumn();
+                } catch (Throwable $e) {
+                    // Sin la columna (falta el 002) se conserva por prudencia.
+                }
+                if ($aplicada < (int) ($ant['revision'] ?? 0)) {
+                    $extra['alias'] = $ant['alias'];
+                }
+            }
             mr_z_guardar($pc, array_merge(
                 ['schemaVersion' => 1, 'revision' => $rev, 'generadoEn' => date('c', $rev)],
-                $secciones
+                $secciones,
+                $extra
             ));
             $hechas[] = $pc;
         } catch (Throwable $e) {

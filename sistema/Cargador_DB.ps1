@@ -9,9 +9,17 @@
     - Archivos de dias anteriores (cerrados) en logs\ y logs\cargados\: se envian una sola vez;
       una vez confirmados por la API se marcan como sincronizados en diag\db_sync_state.json
       para no volver a leerlos ni reenviarlos en cada corrida.
-    - Archivo del dia en curso: se reenvia completo en cada corrida (su ultima fila puede seguir
-      cambiando). No se duplica nada en el servidor: la API hace UPSERT por la clave
+    - Archivo del dia en curso: la primera corrida del dia lo envia completo; las siguientes solo
+      reenvian desde poco antes de su ultima fila de estado (la unica que puede seguir cambiando;
+      [v1.13.8]). No se duplica nada en el servidor: la API hace UPSERT por la clave
       (pc, destino, fecha, hora, tipo, mensaje) - ver backend/IA.md decision D5.
+    - [v1.13.8] Cuidado con las protecciones del servidor (Cloudflare, firewall del hosting):
+      User-Agent propio ("MRV1-Cargador/x.y.z"); si el servidor rechaza el envio (401/403/429 o una
+      respuesta que no es de la API) se corta la corrida en el primer intento, sin reintentos ni
+      mas archivos, y no se vuelve a intentar hasta pasado un plazo creciente (diag\db_backoff.json,
+      30 min, 1 h, 2 h... hasta la frecuencia normal; respeta Retry-After). Tras encender el equipo se
+      espera un tiempo al azar para que un laboratorio entero no llegue a la vez. En el log queda el
+      codigo HTTP, el servidor (Cloudflare o no) y el inicio de la respuesta.
     - El alias del PC (config\db_api.json) se manda en todos los envios, no solo cuando cambia
       (decision D9 de backend/IA.md): es un dato liviano y asi la API mantiene "computadoras"
       al dia sola, sin pasos manuales, incluso si un envio anterior fallo.
@@ -40,6 +48,11 @@ $syncStateFile = Join-Path $diagDir 'db_sync_state.json'
 $pc            = $env:COMPUTERNAME
 $utf8          = New-Object System.Text.UTF8Encoding($false)
 $script:LastDbError = $null
+$script:BloqueadoHasta = $null   # [v1.13.8] 'yyyy-MM-ddTHH:mm:ss' si el servidor rechazo el envio y se espera antes de reintentar
+$script:Corte = $false           # la corrida se detiene (servidor rechaza o no responde)
+$script:CorteBackoff = $false    # ademas del corte, hay que esperar un plazo (rechazo del servidor)
+$script:RetryAfterSec = 0
+$backoffFile   = Join-Path $diagDir 'db_backoff.json'
 
 function Write-Log([string]$msg) {
     try {
@@ -70,12 +83,81 @@ function Write-DbStatus([bool]$ok, [int]$syncedOld, [int]$failedOld, [int]$synce
             nextRun       = $now.AddMinutes($runEveryMin).ToString('s')
             lastError     = $errorMsg
         }
+        if ($script:BloqueadoHasta) {
+            $obj.bloqueadoHasta = $script:BloqueadoHasta
+            if ([datetime]$script:BloqueadoHasta -gt $now.AddMinutes($runEveryMin)) { $obj.nextRun = $script:BloqueadoHasta }
+        }
         $json = $obj | ConvertTo-Json -Depth 4
         $tmp = $statusFile + '.tmp'
         [System.IO.File]::WriteAllText($tmp, $json, $utf8)
         if (Test-Path -LiteralPath $statusFile) { [System.IO.File]::Replace($tmp, $statusFile, [NullString]::Value) }
         else { [System.IO.File]::Move($tmp, $statusFile) }
     } catch { Write-Log ('No se pudo escribir db_status.json: ' + $_.Exception.Message) }
+}
+
+# ---------------------------------------------------------------------------------------------
+# [v1.13.8] Espera ante rechazos del servidor. diag\db_backoff.json = { hasta, intentos, motivo };
+# lo leen tambien Sincronizar_Config.ps1 y Actualizar_Script.ps1 para no seguir llamando al
+# mismo servidor mientras dura. Se borra al primer envio correcto (o al pedir «Enviar datos ahora»).
+# ---------------------------------------------------------------------------------------------
+function Get-Backoff {
+    try {
+        if (-not (Test-Path -LiteralPath $backoffFile)) { return $null }
+        $b = [System.IO.File]::ReadAllText($backoffFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($b -and $b.hasta) { return $b }
+    } catch { }
+    return $null
+}
+function Set-Backoff([string]$motivo, [int]$retryAfterSec, [int]$runEveryMin) {
+    try {
+        $n = 1; $prev = Get-Backoff
+        if ($prev -and $prev.intentos) { $n = [int]$prev.intentos + 1 }
+        $min = [Math]::Min(30 * [Math]::Pow(2, [Math]::Min($n - 1, 10)), [Math]::Max($runEveryMin, 30))
+        if ($retryAfterSec -gt 0) { $min = [Math]::Max($min, [Math]::Ceiling($retryAfterSec / 60.0)) }
+        $min = [Math]::Min($min, 1440)
+        $hasta = (Get-Date).AddMinutes($min).ToString('s')
+        $obj = [ordered]@{ schemaVersion = 1; hasta = $hasta; intentos = $n; motivo = $motivo; desde = (Get-Date).ToString('s') }
+        if (-not (Test-Path -LiteralPath $diagDir)) { New-Item -ItemType Directory -Path $diagDir -Force | Out-Null }
+        [System.IO.File]::WriteAllText($backoffFile, ($obj | ConvertTo-Json), $utf8)
+        $script:BloqueadoHasta = $hasta
+        Write-Log ('Servidor rechazo el envio (intento {0} seguido): no se reintenta hasta {1} ({2} min).' -f $n, $hasta, [int]$min)
+    } catch { Write-Log ('No se pudo guardar db_backoff.json: ' + $_.Exception.Message) }
+}
+function Clear-Backoff { try { if (Test-Path -LiteralPath $backoffFile) { Remove-Item -LiteralPath $backoffFile -Force -ErrorAction SilentlyContinue } } catch { } }
+
+# Minutos desde el arranque de Windows (9999 si no se puede saber).
+function Get-UptimeMin {
+    try { return ((Get-Date) - (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime).TotalMinutes } catch { return 9999 }
+}
+
+# Resume una excepcion de Invoke-WebRequest: codigo HTTP, servidor, rayo de Cloudflare, Retry-After y el
+# inicio de la respuesta. EsApi = la respuesta es JSON de nuestra API (lo demas viene de una capa
+# intermedia: Cloudflare, firewall del hosting, pagina del hosting...).
+function Get-HttpInfo($ex, $detalleError = $null) {
+    $i = [ordered]@{ Status = 0; Server = ''; Ray = ''; RetryAfter = 0; Cuerpo = ''; EsApi = $false; ErrorApi = $null; Msg = [string]$ex.Message }
+    $r = $ex.Response
+    if ($r) {
+        try { $i.Status = [int]$r.StatusCode } catch { }
+        try { $i.Server = [string]$r.Headers['Server'] } catch { }
+        try { $i.Ray = [string]$r.Headers['CF-RAY'] } catch { }
+        try { $n = 0; if ([int]::TryParse([string]$r.Headers['Retry-After'], [ref]$n)) { $i.RetryAfter = $n } } catch { }
+        try {
+            # En Windows PowerShell 5.1 el cuerpo del error suele venir ya leido en ErrorDetails.Message; si no, de la corriente.
+            $b = ''
+            if ($detalleError -and $detalleError.Message) { $b = [string]$detalleError.Message }
+            if (-not $b) { $sr = New-Object System.IO.StreamReader($r.GetResponseStream()); $b = $sr.ReadToEnd(); $sr.Dispose() }
+            $i.Cuerpo = ($b -replace '\s+', ' ').Trim()
+            if ($i.Cuerpo.Length -gt 200) { $i.Cuerpo = $i.Cuerpo.Substring(0, 200) }
+            $j = $b | ConvertFrom-Json
+            if ($j -and $null -ne $j.PSObject.Properties['ok']) { $i.EsApi = $true; if ($j.error) { $i.ErrorApi = [string]$j.error } }
+        } catch { }
+    }
+    return $i
+}
+function Get-OrigenRechazo($i) {
+    if ($i.Ray -or $i.Server -match 'cloudflare') { return 'Cloudflare' + $(if ($i.Ray) { ', ray ' + $i.Ray } else { '' }) }
+    if ($i.Server) { return 'servidor ' + $i.Server }
+    return 'capa de proteccion del servidor'
 }
 
 # [v1.11] Lanza Sincronizar_Config.ps1 en un proceso aparte (oculto, sin esperar el resultado).
@@ -100,11 +182,12 @@ function Start-ZombieSync {
 
 # ---------------------------------------------------------------------------------------------
 # Estado de sincronizacion: que archivos CERRADOS ya se confirmaron subidos a la API, para no
-# volver a leerlos ni reenviarlos en cada corrida (el archivo del dia en curso nunca se guarda
-# aqui: siempre se reenvia completo, el UPSERT del servidor evita duplicados - D5 de IA.md).
+# volver a leerlos ni reenviarlos en cada corrida. Del archivo del dia en curso se guarda solo
+# desde que fila reenviar en la proxima corrida (diaEnCurso, [v1.13.8]); el UPSERT del servidor
+# evita duplicados al solaparse (D5 de IA.md).
 # ---------------------------------------------------------------------------------------------
 function Get-SyncState {
-    if (-not (Test-Path -LiteralPath $syncStateFile)) { return @{ archivosSincronizados = @{} } }
+    if (-not (Test-Path -LiteralPath $syncStateFile)) { return @{ archivosSincronizados = @{}; diaEnCurso = @{} } }
     try {
         $raw = [System.IO.File]::ReadAllText($syncStateFile, [System.Text.Encoding]::UTF8)
         $obj = $raw | ConvertFrom-Json
@@ -112,10 +195,14 @@ function Get-SyncState {
         if ($obj.archivosSincronizados) {
             foreach ($p in $obj.archivosSincronizados.PSObject.Properties) { $map[$p.Name] = $true }
         }
-        return @{ archivosSincronizados = $map }
+        $dia = @{}
+        if ($obj.diaEnCurso) {
+            foreach ($p in $obj.diaEnCurso.PSObject.Properties) { $n = 0; if ([int]::TryParse([string]$p.Value, [ref]$n) -and $n -ge 0) { $dia[$p.Name] = $n } }
+        }
+        return @{ archivosSincronizados = $map; diaEnCurso = $dia }
     } catch {
         Write-Log ('No se pudo leer db_sync_state.json, se reconstruye desde cero: ' + $_.Exception.Message)
-        return @{ archivosSincronizados = @{} }
+        return @{ archivosSincronizados = @{}; diaEnCurso = @{} }
     }
 }
 
@@ -124,7 +211,10 @@ function Save-SyncState([hashtable]$state) {
         if (-not (Test-Path -LiteralPath $diagDir)) { New-Item -ItemType Directory -Path $diagDir -Force | Out-Null }
         $ordered = [ordered]@{}
         foreach ($k in ($state.archivosSincronizados.Keys | Sort-Object)) { $ordered[$k] = $true }
-        $obj = [ordered]@{ schemaVersion = 1; actualizado = (Get-Date).ToString('s'); archivosSincronizados = $ordered }
+        $hoyTxt = (Get-Date).ToString('yyyy-MM-dd')
+        $dia = [ordered]@{}
+        foreach ($k in ($state.diaEnCurso.Keys | Sort-Object)) { if ($k.EndsWith(' ' + $hoyTxt + '.csv')) { $dia[$k] = [int]$state.diaEnCurso[$k] } }
+        $obj = [ordered]@{ schemaVersion = 2; actualizado = (Get-Date).ToString('s'); archivosSincronizados = $ordered; diaEnCurso = $dia }
         $json = $obj | ConvertTo-Json -Depth 4
         $tmp = $syncStateFile + '.tmp'
         [System.IO.File]::WriteAllText($tmp, $json, $utf8)
@@ -166,6 +256,27 @@ try {
     $runEveryMin = 180; if ($cfg.runEveryMin) { $runEveryMin = [int]$cfg.runEveryMin }   # D10: predeterminado 3 horas
     $retries     = 3;   if ($cfg.retries)     { $retries     = [int]$cfg.retries }
     $maxFilas    = 300; if ($cfg.maxFilasPorEnvio) { $maxFilas = [int]$cfg.maxFilasPorEnvio }  # margen bajo el limite del servidor (500, ver IA.md sec. 5)
+
+    # [v1.13.8] User-Agent propio (el de PowerShell por defecto suele ser marcado por las protecciones anti-bot).
+    $verTxt = '0'
+    try {
+        $verPath = Join-Path $cfgDir 'version.json'
+        if (Test-Path -LiteralPath $verPath) { $vj = [System.IO.File]::ReadAllText($verPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json; if ($vj.version) { $verTxt = [string]$vj.version } }
+    } catch { }
+    $userAgent = 'MRV1-Cargador/' + $verTxt
+
+    # [v1.13.8] Si el servidor rechazo el envio hace poco, no insistir hasta que pase el plazo.
+    $bk = Get-Backoff
+    if ($bk -and ([datetime]$bk.hasta) -gt (Get-Date)) {
+        Write-Log ('Envio en espera por rechazo previo del servidor ({0}); proximo intento a partir de {1}.' -f $bk.motivo, $bk.hasta)
+        exit 0
+    }
+    # [v1.13.8] Recien encendido el equipo: esperar un tiempo al azar para que un laboratorio entero no llegue a la vez.
+    if ((Get-UptimeMin) -lt 15) {
+        $espera = Get-Random -Minimum 0 -Maximum 121
+        Write-Log ('Equipo recien encendido: se espera {0} s antes de enviar (evita llegar todos a la vez).' -f $espera)
+        Start-Sleep -Seconds $espera
+    }
 
     # ---------------------------------------------------------------------------------------
     # Lectura de CSV: mismo formato que escribe Monitor_Red.ps1 (UTF-8 con BOM, separador ';',
@@ -220,7 +331,9 @@ try {
             $fin = [Math]::Min($i + $size, $items.Count) - 1
             [void]$lotes.Add(@($items[$i..$fin]))
         }
-        return $lotes
+        # [v1.13.8] La coma es imprescindible: sin ella, con un solo lote (<= maxFilas filas, lo normal) PowerShell
+        # desenvolvia el resultado y el foreach recibia cada FILA como si fuera un lote: una peticion por fila.
+        return ,$lotes
     }
 
     # Envia un lote de filas de un mismo destino. Reintenta $retries veces ante fallo de red.
@@ -237,28 +350,40 @@ try {
         for ($i = 1; $i -le $retries; $i++) {
             try {
                 $resp = Invoke-WebRequest -Uri $apiUrl -Method Post `
-                    -Headers @{ 'X-MR-Token' = $token } `
+                    -Headers @{ 'X-MR-Token' = $token; 'Accept' = 'application/json' } -UserAgent $userAgent `
                     -ContentType 'application/json; charset=utf-8' `
                     -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
                     -TimeoutSec 30 -UseBasicParsing
-                $json = $resp.Content | ConvertFrom-Json
+                $json = $null
+                try { $json = $resp.Content | ConvertFrom-Json } catch { }
+                if (-not $json -or $null -eq $json.PSObject.Properties['ok']) {
+                    # 200 pero no es la API (pagina de desafio, portal cautivo, etc.)
+                    $lastErr = 'respuesta que no es de la API (pagina intermedia del servidor o de la red)'
+                    $script:Corte = $true; $script:CorteBackoff = $true
+                    $ini = (([string]$resp.Content) -replace '\s+', ' ').Trim(); if ($ini.Length -gt 200) { $ini = $ini.Substring(0, 200) }
+                    Write-Log ('Respuesta HTTP 200 que no es JSON de la API para {0}. Inicio de la respuesta: {1}' -f $destino, $ini)
+                    return @{ Ok = $false; Insertadas = 0; Actualizadas = 0; Error = $lastErr }
+                }
                 return @{ Ok = $true; Insertadas = [int]$json.insertadas; Actualizadas = [int]$json.actualizadas; Error = $null }
             } catch {
-                $detail = $_.Exception.Message
-                if ($_.Exception.Response) {
-                    try {
-                        $stream = $_.Exception.Response.GetResponseStream()
-                        $reader = New-Object System.IO.StreamReader($stream)
-                        $errBody = $reader.ReadToEnd()
-                        $errJson = $errBody | ConvertFrom-Json
-                        if ($errJson.error) { $detail = [string]$errJson.error }
-                    } catch { }
+                $h = Get-HttpInfo $_.Exception $_.ErrorDetails
+                $lastErr = if ($h.ErrorApi) { $h.ErrorApi } else { $h.Msg }
+                Write-Log ('Intento {0}/{1} fallido para {2} ({3} filas): HTTP {4} | servidor="{5}" ray="{6}" | {7} | inicio de la respuesta: {8}' -f $i, $retries, $destino, $filasLote.Count, $h.Status, $h.Server, $h.Ray, $lastErr, $h.Cuerpo)
+                if ($h.Status -gt 0) { $script:RetryAfterSec = [Math]::Max($script:RetryAfterSec, $h.RetryAfter) }
+                # Rechazo del servidor (401/403/429 o algo que no es nuestra API): insistir solo empeora el bloqueo.
+                if (($h.Status -in @(401, 403, 429)) -or ($h.Status -gt 0 -and -not $h.EsApi)) {
+                    $lastErr = ('HTTP {0}: {1}' -f $h.Status, $(if ($h.EsApi) { $lastErr } else { 'rechazado por ' + (Get-OrigenRechazo $h) }))
+                    $script:Corte = $true; $script:CorteBackoff = $true
+                    return @{ Ok = $false; Insertadas = 0; Actualizadas = 0; Error = $lastErr }
                 }
-                $lastErr = $detail
-                Write-Log ('Intento {0}/{1} fallido para {2} ({3} filas): {4}' -f $i, $retries, $destino, $filasLote.Count, $lastErr)
-                if ($i -lt $retries) { Start-Sleep -Seconds 2 }
+                # Error de validacion de la API (4xx): reintentar no lo arregla; se sigue con los demas archivos.
+                if ($h.Status -ge 400 -and $h.Status -lt 500) { return @{ Ok = $false; Insertadas = 0; Actualizadas = 0; Error = ('HTTP {0}: {1}' -f $h.Status, $lastErr) } }
+                # Sin respuesta (red, DNS, tiempo agotado) o 5xx de la API: espera creciente con azar.
+                if ($i -lt $retries) { Start-Sleep -Milliseconds ([int]((Get-Random -Minimum 1500 -Maximum 3500) * [Math]::Pow(2, $i - 1))) }
             }
         }
+        # Agotados los reintentos sin respuesta util: no tiene sentido probar con el resto de archivos.
+        $script:Corte = $true
         return @{ Ok = $false; Insertadas = 0; Actualizadas = 0; Error = $lastErr }
     }
 
@@ -268,6 +393,7 @@ try {
         if ($filas.Count -eq 0) { return $true }  # nada que enviar (archivo solo con encabezado)
         $todoOk = $true
         foreach ($lote in (Get-Batches $filas $maxFilas)) {
+            if ($script:Corte) { return $false }
             $r = Send-Batch $destino $lote
             if ($r.Ok) {
                 $script:TotalInsertadas += $r.Insertadas
@@ -301,6 +427,7 @@ try {
     $syncedToday = 0; $failedToday = 0
 
     foreach ($f in $todosCsv) {
+        if ($script:Corte) { break }   # el servidor rechazo o no responde: no seguir con mas archivos
         if ($f.Name -notmatch $patron) { continue }
         $destino = $Matches[1]
         $fecha   = $Matches[2]
@@ -308,7 +435,7 @@ try {
         if ($fecha -lt $today) {
             # Archivo cerrado: se envia una sola vez.
             if ($state.archivosSincronizados.ContainsKey($f.Name)) { continue }
-            $filas = Read-CsvRows $f.FullName
+            $filas = @(Read-CsvRows $f.FullName)
             if (Send-Archivo $destino $filas) {
                 $state.archivosSincronizados[$f.Name] = $true
                 $syncedOld++
@@ -316,7 +443,8 @@ try {
                 $failedOld++
             }
         } elseif ($fecha -eq $today) {
-            # Archivo del dia en curso: se reenvia completo en cada corrida (UPSERT evita duplicados).
+            # Archivo del dia en curso. Primera corrida del dia: completo. Despues: desde poco antes de la
+            # ultima fila OK/ERROR (la unica que el monitor puede seguir modificando). El UPSERT evita duplicados.
             # Copia de lectura compartida para no interferir con el monitor mientras escribe.
             $tmp = $null
             try {
@@ -324,8 +452,19 @@ try {
                 $fs = New-Object System.IO.FileStream($f.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
                 $out = [System.IO.File]::Create($tmp)
                 try { $fs.CopyTo($out) } finally { $out.Dispose(); $fs.Dispose() }
-                $filas = Read-CsvRows $tmp
-                if (Send-Archivo $destino $filas) { $syncedToday++ } else { $failedToday++ }
+                $filas = @(Read-CsvRows $tmp)
+                $inicio = 0
+                if ($state.diaEnCurso.ContainsKey($f.Name)) {
+                    $prevIdx = [int]$state.diaEnCurso[$f.Name]
+                    if ($prevIdx -gt 0 -and $prevIdx -lt $filas.Count) { $inicio = $prevIdx }   # archivo mas corto que antes = se reenvia completo
+                }
+                $aEnviar = if ($inicio -gt 0) { @($filas[$inicio..($filas.Count - 1)]) } else { $filas }
+                if (Send-Archivo $destino $aEnviar) {
+                    $syncedToday++
+                    $ult = -1
+                    for ($k = 0; $k -lt $filas.Count; $k++) { if ($filas[$k].tipo -eq 'OK' -or $filas[$k].tipo -eq 'ERROR') { $ult = $k } }
+                    $state.diaEnCurso[$f.Name] = [Math]::Max(0, $ult - 2)
+                } else { $failedToday++ }
             } catch {
                 $failedToday++
                 $script:LastDbError = ('{0}: {1}' -f $f.Name, $_.Exception.Message)
@@ -339,10 +478,13 @@ try {
 
     Save-SyncState $state
 
-    $okOverall = (($failedOld + $failedToday) -eq 0)
+    $okOverall = (($failedOld + $failedToday) -eq 0) -and (-not $script:Corte)
+    if ($script:Corte -and $script:CorteBackoff) { Set-Backoff $script:LastDbError $script:RetryAfterSec $runEveryMin }
+    elseif ($okOverall) { Clear-Backoff }
     Write-DbStatus $okOverall $syncedOld $failedOld $syncedToday $failedToday $script:TotalInsertadas $script:TotalActualizadas $runEveryMin $script:LastDbError
     Write-Log ('Ciclo terminado. Archivos cerrados sincronizados: {0} (fallidos: {1}). Dia en curso enviado: {2} (fallidos: {3}). Filas insertadas: {4}, actualizadas: {5}.' -f $syncedOld, $failedOld, $syncedToday, $failedToday, $script:TotalInsertadas, $script:TotalActualizadas)
-    Start-ZombieSync
+    # Si el servidor rechazo el envio, no lanzar las otras consultas (configuracion remota, actualizaciones): irian al mismo servidor.
+    if (-not ($script:Corte -and $script:CorteBackoff)) { Start-ZombieSync }
 }
 catch {
     Write-Log ('Error general del cargador DB: ' + $_.Exception.Message)

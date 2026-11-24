@@ -100,7 +100,8 @@ backend/
 ├── .gitignore
 ├── sql/
 │   ├── 001_crear_base.sql       Crea las tablas computadoras y registros
-│   └── 002_config_remota.sql    Columnas de la configuración remota (idempotente)
+│   ├── 002_config_remota.sql    Columnas de la configuración remota (idempotente)
+│   └── 003_notas.sql            Bitácora de notas manuales (idempotente)
 ├── tools/
 │   └── Publicar_Actualizacion.bat / .ps1   Publica una versión (manifiesto firmado + etiqueta); solo para el desarrollador
 └── api/

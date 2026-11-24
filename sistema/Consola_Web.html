@@ -485,7 +485,8 @@ td.m{overflow-wrap:anywhere;min-width:220px}
       p('Último intento: ' + ult + (hace !== null ? ' (hace ' + dur(hace) + ')' : ''));
       p('Próxima: ' + proxTxt, atras ? 'w' : '');
       p(st.lastError ? String(st.lastError) : '(sin detalle; revise ' + log + ')', 'e');
-      p('Vuelva a ejecutar ' + bat + ' para corregir la configuración.', 'w');
+      if (st.bloqueadoHasta) p('El servidor rechazó el envío (protección contra abusos). El monitor no insiste y reintenta solo a partir de las ' + fechaHora(st.bloqueadoHasta, ahora) + '; no hace falta reinstalar. «Enviar datos ahora» hace una prueba inmediata.', 'w');
+      else p('Vuelva a ejecutar ' + bat + ' para corregir la configuración.', 'w');
     }
     if (atras) p('La tarea programada \'' + tarea + '\' no ha corrido cuando tocaba; verifique que exista y esté habilitada.', 'w');
     if (kind === 'DB') c.appendChild(accionDb());
