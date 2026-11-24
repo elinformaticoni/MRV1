@@ -153,25 +153,68 @@ function mr_envio_ruta(string $pc): ?string
     return __DIR__ . '/../update/envios/' . strtolower($pc) . '.json';
 }
 
-/** Anota que la PC cargó datos ahora: la hora de su última carga de cada día (se conservan los últimos 40 días). */
+/** Contenido del archivo de una PC: { ultimo, dias: {fecha: hora}, latidos: {fecha: hora} } (vacío si no existe o no se puede leer). */
+function mr_envio_leer(string $ruta): array
+{
+    $d = is_file($ruta) ? json_decode((string) @file_get_contents($ruta), true) : null;
+    return [
+        'ultimo'  => is_array($d) && is_string($d['ultimo'] ?? null) ? $d['ultimo'] : '',
+        'dias'    => is_array($d) && is_array($d['dias'] ?? null) ? $d['dias'] : [],
+        'latidos' => is_array($d) && is_array($d['latidos'] ?? null) ? $d['latidos'] : [],
+    ];
+}
+
+function mr_envio_escribir(string $ruta, array $d): bool
+{
+    $dir = dirname($ruta);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+        return false;
+    }
+    foreach (['dias', 'latidos'] as $k) {
+        krsort($d[$k]);
+        $d[$k] = array_slice($d[$k], 0, 40, true);
+    }
+    return @file_put_contents($ruta, json_encode($d, JSON_UNESCAPED_UNICODE), LOCK_EX) !== false;
+}
+
+/** Anota que la PC se comunicó ahora: la hora de su última comunicación de cada día (se conservan los últimos 40 días). */
 function mr_envio_registrar(string $pc): bool
 {
     $ruta = mr_envio_ruta($pc);
     if ($ruta === null) {
         return false;
     }
-    $dir = dirname($ruta);
-    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+    $d = mr_envio_leer($ruta);
+    $ahora = mr_hora_local(time());
+    $d['ultimo'] = $ahora;
+    $d['dias'][substr($ahora, 0, 10)] = substr($ahora, 11);
+    return mr_envio_escribir($ruta, $d);
+}
+
+/**
+ * Latidos que trae la PC (Monitor_Red.ps1 sobrescribe latidos.json cada 2 min con su hora local): la última hora en que estuvo
+ * encendida cada sesión. Se conserva, por día, la más tardía. Se ignoran los valores mal formados o en el futuro (reloj desajustado).
+ */
+function mr_envio_latidos(string $pc, array $latidos): bool
+{
+    $ruta = mr_envio_ruta($pc);
+    if ($ruta === null || !$latidos) {
         return false;
     }
-    $ahora = mr_hora_local(time());
-    $ant = is_file($ruta) ? json_decode((string) @file_get_contents($ruta), true) : null;
-    $dias = is_array($ant) && is_array($ant['dias'] ?? null) ? $ant['dias'] : [];
-    $dias[substr($ahora, 0, 10)] = substr($ahora, 11);
-    krsort($dias);
-    $dias = array_slice($dias, 0, 40, true);
-    $json = json_encode(['ultimo' => $ahora, 'dias' => $dias], JSON_UNESCAPED_UNICODE);
-    return @file_put_contents($ruta, $json, LOCK_EX) !== false;
+    $d = mr_envio_leer($ruta);
+    $limite = mr_hora_local(time() + 600);
+    $cambio = false;
+    foreach (array_slice($latidos, 0, 30) as $l) {
+        $l = (string) $l;
+        if (!preg_match('/^(\d{4}-\d{2}-\d{2})T((?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d)$/', $l, $m) || $l > $limite) {
+            continue;
+        }
+        if (!isset($d['latidos'][$m[1]]) || $d['latidos'][$m[1]] < $m[2]) {
+            $d['latidos'][$m[1]] = $m[2];
+            $cambio = true;
+        }
+    }
+    return $cambio ? mr_envio_escribir($ruta, $d) : true;
 }
 
 /** Igual que mr_envio_registrar() pero nunca falla: anotar la comunicación no debe afectar a la respuesta que recibe la PC. */
@@ -184,21 +227,26 @@ function mr_envio_anotar(string $pc): void
     }
 }
 
-/** { ultimo: 'AAAA-MM-DDTHH:MM:SS', dias: { 'AAAA-MM-DD': 'HH:MM:SS' } } (hora de las PC) o null si aún no hay cargas anotadas. */
+/** { ultimo, dias: { fecha: hora de la última comunicación }, latidos: { fecha: última hora encendida } } (hora de las PC) o null si aún no hay datos. */
 function mr_envio_pc(string $pc): ?array
 {
     $ruta = mr_envio_ruta($pc);
-    $d = ($ruta !== null && is_file($ruta)) ? json_decode((string) @file_get_contents($ruta), true) : null;
-    if (!is_array($d) || !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', (string) ($d['ultimo'] ?? '')) || !is_array($d['dias'] ?? null)) {
+    if ($ruta === null || !is_file($ruta)) {
         return null;
     }
-    $dias = [];
-    foreach ($d['dias'] as $f => $h) {
-        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f) && preg_match('/^\d{2}:\d{2}:\d{2}$/', (string) $h)) {
-            $dias[(string) $f] = (string) $h;
+    $d = mr_envio_leer($ruta);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', $d['ultimo'])) {
+        return null;
+    }
+    $limpio = ['ultimo' => $d['ultimo'], 'dias' => [], 'latidos' => []];
+    foreach (['dias', 'latidos'] as $k) {
+        foreach ($d[$k] as $f => $h) {
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f) && preg_match('/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/', (string) $h)) {
+                $limpio[$k][(string) $f] = (string) $h;
+            }
         }
     }
-    return ['ultimo' => (string) $d['ultimo'], 'dias' => $dias];
+    return $limpio;
 }
 
 /**

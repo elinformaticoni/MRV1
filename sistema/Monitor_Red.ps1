@@ -41,6 +41,10 @@ $script:ShutdownOk = $false
 $script:ZombieStateFile = Join-Path $Root 'diag\zombie_state.json'   # [v1.11] config remota
 $script:UpdateStateFile = Join-Path $Root 'diag\update_state.json'   # [v1.13.1] actualizacion automatica (la escribe Actualizar_Script.ps1)
 $script:UpdInfo = $null; $script:UpdInfoAt = [datetime]::MinValue
+$script:LatidoFile = Join-Path $Root 'latidos.json'   # [v1.13.12] vigilante: ultima hora en que este equipo estuvo encendido
+$script:LatidoEveryMs = 120000                         # se sobrescribe cada 2 minutos
+$script:LatidoSesiones = @()                           # sesiones anteriores [{inicio, ultimo}] (las 10 ultimas)
+$script:LatidoInicio = ''
 
 # ---------------------------------------------------------------------------------------------
 # Log tecnico (diag\monitor.log, con rotacion por tamano)
@@ -751,6 +755,57 @@ function Invoke-GapHandling([double]$gapSecs, [long]$lastTickMs, [long]$nowMs) {
     Add-EventRow ('Pausa del monitor o suspensión de Windows: {0} s sin actividad' -f [int][math]::Round($gapSecs))
 }
 
+# ---------------------------------------------------------------------------------------------
+# [v1.13.12] Vigilante (latidos.json). Cada 2 minutos se sobrescribe, EN LOCAL, la hora actual: si el equipo se apaga, se
+# suspende o se va la energia, ese archivo conserva hasta que momento estuvo encendido. Cargador_DB.ps1 lo envia con cada
+# carga (las 10 sesiones anteriores + la actual) y el panel de analisis lo usa para saber con precision hasta cuando duro un
+# estado que quedo abierto, sin depender de la frecuencia de carga ni de que el servidor sea alcanzable en ese momento.
+# Mejor esfuerzo: un fallo aqui nunca afecta al monitoreo.
+# ---------------------------------------------------------------------------------------------
+function Write-Latido {
+    try {
+        $obj = [ordered]@{
+            schemaVersion = 1
+            pc            = $script:PC
+            sesiones      = @($script:LatidoSesiones)
+            actual        = [ordered]@{ inicio = $script:LatidoInicio; ultimo = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss') }
+        }
+        $tmp = $script:LatidoFile + '.tmp'
+        [System.IO.File]::WriteAllText($tmp, ($obj | ConvertTo-Json -Depth 5), $script:Utf8)
+        if (Test-Path -LiteralPath $script:LatidoFile) { [System.IO.File]::Replace($tmp, $script:LatidoFile, [NullString]::Value) }
+        else { [System.IO.File]::Move($tmp, $script:LatidoFile) }
+    } catch { }
+}
+
+# Al arrancar: la sesion anterior pasa a la lista y, si el ultimo latido quedo muy atras (no fue un reinicio rapido del propio monitor,
+# por ejemplo al actualizar), se deja un EVENTO con la ultima hora en que el equipo estuvo encendido.
+function Initialize-Latido {
+    $script:LatidoInicio = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
+    try {
+        if (Test-Path -LiteralPath $script:LatidoFile) {
+            $prev = [System.IO.File]::ReadAllText($script:LatidoFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+            $lista = New-Object System.Collections.ArrayList
+            foreach ($s in @($prev.sesiones)) {
+                if ($s -and $s.ultimo) { [void]$lista.Add([ordered]@{ inicio = [string]$s.inicio; ultimo = [string]$s.ultimo }) }
+            }
+            if ($prev.actual -and $prev.actual.ultimo) {
+                [void]$lista.Add([ordered]@{ inicio = [string]$prev.actual.inicio; ultimo = [string]$prev.actual.ultimo })
+                $ult = [datetime]::MinValue
+                if ([datetime]::TryParseExact([string]$prev.actual.ultimo, 'yyyy-MM-ddTHH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$ult)) {
+                    $gap = ((Get-Date) - $ult).TotalSeconds
+                    if ($gap -ge 300) {
+                        $h = [int][math]::Floor($gap / 3600); $m = [int][math]::Floor(($gap % 3600) / 60)
+                        Add-EventRow ('Equipo sin actividad desde {0} (apagado o suspendido o sin energía): {1} h {2} min hasta el arranque del monitor' -f $ult.ToString('yyyy-MM-dd HH:mm:ss'), $h, $m)
+                    }
+                }
+            }
+            while ($lista.Count -gt 10) { $lista.RemoveAt(0) }
+            $script:LatidoSesiones = @($lista)
+        }
+    } catch { Write-DiagLog ('No se pudo leer latidos.json: ' + $_.Exception.Message) }
+    Write-Latido
+}
+
 function Close-AllStates([string]$reason) {
     $nowMs = $script:Clock.ElapsedMilliseconds
     foreach ($t in $script:Targets) {
@@ -764,6 +819,7 @@ function Close-AllStates([string]$reason) {
         Invoke-Queue
         if ($script:Queue.Count -gt 0) { Start-Sleep -Milliseconds 200 }
     }
+    Write-Latido   # parada ordenada: queda anotada la hora exacta
     Write-Status $false
     Write-DiagLog ('Monitor detenido (' + $reason + ')')
 }
@@ -868,6 +924,7 @@ public static class MRShutdown {
     }
     Add-StartRows $false
     Invoke-Queue
+    Initialize-Latido
     Write-Status $true
 
     # -----------------------------------------------------------------------------------------
@@ -878,6 +935,7 @@ public static class MRShutdown {
     $lastNetMs = $lastTickMs
     $lastUserMs = $lastTickMs
     $lastStatusMs = $lastTickMs
+    $lastLatidoMs = $lastTickMs
     $reason = ''
 
     while ($true) {
@@ -904,6 +962,7 @@ public static class MRShutdown {
             Invoke-Queue
 
             if (($nowMs - $lastStatusMs) -ge 1000) { $lastStatusMs = $nowMs; Write-Status $true }
+            if (($nowMs - $lastLatidoMs) -ge $script:LatidoEveryMs) { $lastLatidoMs = $nowMs; Write-Latido }
         } catch {
             Write-DiagLog ('Error en el ciclo principal: ' + $_.Exception.Message)
             Start-Sleep -Seconds 1

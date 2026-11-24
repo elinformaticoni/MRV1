@@ -1287,15 +1287,18 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
         // Último envío de la PC (hora de la PC) y su frecuencia: acota el estado abierto de HOY. Sin dato (cliente anterior a 1.13.12): como antes.
         var limiteEnvio = null, infoEnvio = null, env = m.envio || null;
         if (ahora && env) {
-          var hb = env.cargas && env.cargas.dias && env.cargas.dias[d] ? secs(env.cargas.dias[d]) : null;   // última carga anotada ese día
+          var hb = env.cargas && env.cargas.dias && env.cargas.dias[d] ? secs(env.cargas.dias[d]) : null;   // última comunicación anotada ese día
+          var lat = env.cargas && env.cargas.latidos && env.cargas.latidos[d] ? secs(env.cargas.latidos[d]) : null;   // última hora encendida (vigilante local de la PC)
+          if (lat !== null && (hb === null || lat > hb)) hb = (d === ahora.fecha) ? lat : hb;
           var dbc = env.db && env.db[d] ? String(env.db[d]) : null;                                        // última vez que llegó/cambió una fila ese día
           var dbs = (dbc && dbc.slice(0, 10) === d) ? secs(dbc.slice(11)) : null;
           if (d === ahora.fecha) {
             // Hoy: solo con carga anotada (si no, se pinta hasta ahora como antes). Hasta la última carga + la espera configurada + un margen.
             if (hb !== null && env.frecuencia) { limiteEnvio = hb + env.frecuencia * 60 + GRACIA; infoEnvio = { hoy: true, ult: hb, hasta: limiteEnvio, frec: env.frecuencia }; }
           } else {
-            var cs = Math.max(hb === null ? -1 : hb, dbs === null ? -1 : dbs);
-            if (cs >= 0) { limiteEnvio = cs; infoEnvio = { hoy: false, ult: cs }; }
+            var otros = Math.max(hb === null ? -1 : hb, dbs === null ? -1 : dbs);
+            var cs = Math.max(otros, lat === null ? -1 : lat);
+            if (cs >= 0) { limiteEnvio = cs; infoEnvio = { hoy: false, ult: cs, latido: lat !== null && lat >= otros }; }
           }
         }
         m.destinos.forEach(function (de) {
@@ -1577,7 +1580,9 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
               tip += '\nÚltima carga recibida: ' + hhmmss(sg.envio.ult) + ' · se espera la siguiente (cada ' + sg.envio.frec + ' min) hasta ' + hhmm(sg.envio.hasta);
               if (sg.recortado) tip += '\nSin carga posterior: se asume apagada, suspendida o sin red';
             } else if (sg.envio) {
-              tip += '\nConfirmado hasta ' + hhmmss(sg.envio.ult) + ' (último dato recibido ese día); después no llegó nada: apagada, suspendida o sin red';
+              tip += sg.envio.latido
+                ? '\nEncendida hasta ' + hhmmss(sg.envio.ult) + ' (último latido que guardó el equipo); después no hubo actividad: apagada, suspendida o sin energía'
+                : '\nConfirmado hasta ' + hhmmss(sg.envio.ult) + ' (último dato recibido ese día); después no llegó nada: apagada, suspendida o sin red';
             }
           }
           if (sg.tipo === 'OK' && sg.lat) tip += '\nLatencia promedio: ' + sg.lat + ' ms';

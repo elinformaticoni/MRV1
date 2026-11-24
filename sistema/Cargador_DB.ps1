@@ -343,6 +343,8 @@ try {
             alias   = $alias
             destino = $destino
             filas   = @($filasLote)
+            # [v1.13.12] Vigilante: ultimas horas en que este equipo estuvo encendido (sesiones anteriores + la actual), de latidos.json.
+            latidos = @($script:Latidos)
         }
         $body = $bodyObj | ConvertTo-Json -Depth 6 -Compress
 
@@ -411,6 +413,20 @@ try {
     # ---------------------------------------------------------------------------------------
     $script:TotalInsertadas = 0
     $script:TotalActualizadas = 0
+
+    # [v1.13.12] Vigilante: Monitor_Red.ps1 sobrescribe latidos.json cada 2 minutos con la hora actual. Se envian las 10 sesiones
+    # anteriores y la actual (el servidor se queda con la hora mas tardia de cada dia, asi que repetirlas no cambia nada).
+    $script:Latidos = @()
+    try {
+        $lf = Join-Path $Root 'latidos.json'
+        if (Test-Path -LiteralPath $lf) {
+            $lj = [System.IO.File]::ReadAllText($lf, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+            $lt = New-Object System.Collections.ArrayList
+            foreach ($s in @($lj.sesiones)) { if ($s -and $s.ultimo) { [void]$lt.Add([string]$s.ultimo) } }
+            if ($lj.actual -and $lj.actual.ultimo) { [void]$lt.Add([string]$lj.actual.ultimo) }
+            $script:Latidos = @($lt | Select-Object -Last 12)
+        }
+    } catch { Write-Log ('No se pudo leer latidos.json: ' + $_.Exception.Message) }
 
     $state = Get-SyncState
     $today = (Get-Date).ToString('yyyy-MM-dd')
