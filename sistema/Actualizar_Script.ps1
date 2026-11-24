@@ -206,6 +206,29 @@ function Restart-Monitor {
     }
 }
 
+# [v1.13.10] Deja una fila EVENTO "Monitor actualizado: version X (desde Y)" en el CSV de hoy de cada destino, para que el
+# analisis y la consola vean el momento exacto del cambio (el reinicio del monitor ya escribe su propio INICIO con la version
+# nueva). Mejor esfuerzo: si el archivo no existe o esta bloqueado se omite. Este script va sin BOM (solo ASCII): la o con
+# tilde se arma con su codigo. El texto no puede llevar ';' (separador del CSV).
+function Write-UpdateEvent([string]$desde, [string]$hasta) {
+    try {
+        $mc = Read-JsonFile (Join-Path $cfgDir 'monitor.json')
+        if (-not $mc -or -not $mc.targets) { return }
+        $msg = 'Monitor actualizado: versi' + [char]243 + 'n ' + $hasta + ' (desde ' + $desde + ')'
+        $ahora = Get-Date
+        $linea = '{0};{1};EVENTO;0;0;{2}' -f $ahora.ToString('yyyy-MM-dd'), $ahora.ToString('HH:mm:ss'), $msg
+        foreach ($t in @($mc.targets)) {
+            try {
+                $seguro = ([string]$t.address) -replace '[\/:*?"<>|]', '_'
+                $file = Join-Path (Join-Path $Root 'logs') ('{0} {1} {2}.csv' -f $pc, $seguro, $ahora.ToString('yyyy-MM-dd'))
+                if (-not (Test-Path -LiteralPath $file)) { continue }
+                $fs = New-Object System.IO.FileStream($file, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+                try { $bytes = $utf8.GetBytes($linea + "`r`n"); $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Dispose() }
+            } catch { Write-Log ('No se pudo escribir el EVENTO de actualizacion en {0}: {1}' -f $t.address, $_.Exception.Message) }
+        }
+    } catch { Write-Log ('No se pudo escribir el EVENTO de actualizacion: ' + $_.Exception.Message) }
+}
+
 # El monitor reescribe status.json cada segundo: si vuelve a hacerlo tras el reinicio, esta sano.
 function Test-MonitorSano {
     $sf = Join-Path $Root 'status.json'
@@ -414,7 +437,10 @@ try {
 
     # --- Reinicio del monitor y comprobacion; si no vuelve, rollback
     $sano = $true
-    if ($monitorCambio) {
+    $reinicio = $false
+    # [v1.13.10] El monitor se reinicia SIEMPRE tras actualizar (antes solo si cambiaba Monitor_Red.ps1): asi su version
+    # (status.json, consola, fila INICIO) refleja la nueva aunque solo hayan cambiado otros scripts.
+    if ($true) {
         $reinicio = Restart-Monitor
         if ($reinicio) {
             $sano = Test-MonitorSano
@@ -433,6 +459,7 @@ try {
         exit 0
     }
 
+    if ($reinicio) { Write-UpdateEvent $local $remota }
     Save-State 'actualizada' $remota ('{0} archivo(s) actualizados.' -f $cambios.Count)
     Write-Log ('Actualizacion aplicada: {0} -> {1} ({2} archivo(s)).' -f $local, $remota, $cambios.Count)
     Send-Confirm $baseUrl $token $remota $true ('{0} archivo(s)' -f $cambios.Count) 'actualizada'
