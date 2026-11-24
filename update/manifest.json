@@ -1,16 +1,16 @@
 {
     "schemaVersion":  2,
-    "version":  "1.13.10",
-    "generado":  "2026-11-23T23:32:09",
-    "commit":  "ed25c87c7d47156425985c93cc99860bfec2b7e2",
+    "version":  "1.13.11",
+    "generado":  "2026-11-23T23:39:20",
+    "commit":  "b03ee53e45ed57a7c447d86c0dbeba06c595a8f2",
     "files":  [
                   {
                       "name":  "Monitor_Red.ps1",
                       "dest":  "bin",
                       "path":  "sistema/Monitor_Red.ps1",
-                      "sha256":  "47257da450eb9ce1a6fdc08ad2decd49680a4d042ac25f55e506e5212cb60616",
-                      "sha256lf":  "bf784c6bda6bbee0003c2e67d8f4cc6435060db20ef0280bb6ef0c9e97e57e12",
-                      "size":  44767
+                      "sha256":  "bc7a5641b93255ef0e8d05cfd87992616bdb7dda5c781b5ebd2d09fdfb293e24",
+                      "sha256lf":  "1d8f55f88c31c03d96a0b1da00483eb093f8b47d60a302aac3e3ec940b4aef7c",
+                      "size":  46060
                   },
                   {
                       "name":  "Monitor_Red_Console.ps1",
@@ -24,17 +24,17 @@
                       "name":  "Servidor_Consola.ps1",
                       "dest":  "bin",
                       "path":  "sistema/Servidor_Consola.ps1",
-                      "sha256":  "1d1b3322c6e335968b31f4381d94e6e7c7a9c30508a78622f4d40d3381f24687",
-                      "sha256lf":  "1d1b3322c6e335968b31f4381d94e6e7c7a9c30508a78622f4d40d3381f24687",
-                      "size":  22548
+                      "sha256":  "3b4433069d48a507366c19c674a2070a5b5f4b40f368bdc86f0561db2740f3b9",
+                      "sha256lf":  "3b4433069d48a507366c19c674a2070a5b5f4b40f368bdc86f0561db2740f3b9",
+                      "size":  23666
                   },
                   {
                       "name":  "Consola_Web.html",
                       "dest":  "bin",
                       "path":  "sistema/Consola_Web.html",
-                      "sha256":  "f98e22c2b095908f09b512a855f0a7930f1a439e78c96871d68db97434a7c3a5",
-                      "sha256lf":  "f98e22c2b095908f09b512a855f0a7930f1a439e78c96871d68db97434a7c3a5",
-                      "size":  51813
+                      "sha256":  "c871e6073fbca65af640de754cb69b3bb6612ba01a1200cb4251e3e9a1669eb7",
+                      "sha256lf":  "c871e6073fbca65af640de754cb69b3bb6612ba01a1200cb4251e3e9a1669eb7",
+                      "size":  51982
                   },
                   {
                       "name":  "Cargador_FTP.ps1",
@@ -88,8 +88,8 @@
                       "name":  "Instalar_Monitor.ps1",
                       "dest":  "root",
                       "path":  "sistema/Instalar_Monitor.ps1",
-                      "sha256":  "2a444110bffd68b2a5ab830cb72eff437be046020c9d48b47267b62196e1a333",
-                      "sha256lf":  "2a444110bffd68b2a5ab830cb72eff437be046020c9d48b47267b62196e1a333",
+                      "sha256":  "164a5d49172ac2bac2ae0d008601fb6491cdfd386be5c9a4a35bc9ef898caacc",
+                      "sha256lf":  "164a5d49172ac2bac2ae0d008601fb6491cdfd386be5c9a4a35bc9ef898caacc",
                       "size":  18297
                   },
                   {
