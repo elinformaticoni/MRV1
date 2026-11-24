@@ -531,6 +531,14 @@ function Write-Status([bool]$running) {
                         if ($vv.version -and ([string]$vv.version -match '^\d+(\.\d+){1,3}$')) { $script:VersionText = 'MR V' + $vv.version }
                     }
                 } catch { }
+                # Igual con el alias (config\monitor.json): la consola, el panel o la configuracion remota lo cambian sin reiniciar el monitor.
+                try {
+                    $mpath = Join-Path $script:CfgDir 'monitor.json'
+                    if (Test-Path -LiteralPath $mpath) {
+                        $mj = [System.IO.File]::ReadAllText($mpath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                        if (-not [string]::IsNullOrWhiteSpace([string]$mj.alias)) { $script:Alias = [string]$mj.alias }
+                    }
+                } catch { }
                 if (Test-Path -LiteralPath $script:UpdateStateFile) {
                     $us = [System.IO.File]::ReadAllText($script:UpdateStateFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
                     $script:UpdInfo = [ordered]@{

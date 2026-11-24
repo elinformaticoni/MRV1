@@ -178,12 +178,12 @@ function Get-VersionInstalada {
 function Get-EstadoJson {
     $now = Get-Date
     $st = Read-JsonText $statusFile
+    # [v1.13.11] El alias vigente es el de config\monitor.json (lo que se envia a la API y lo que cambian la consola, el panel
+    # y la configuracion remota); el de status.json es el que el monitor leyo al arrancar y puede estar viejo.
     $alias = ''
-    if ($st) { try { $alias = [string](($st | ConvertFrom-Json).alias) } catch { } }
-    if ([string]::IsNullOrWhiteSpace($alias)) {
-        $mc = Read-JsonObj $monCfgFile
-        if ($mc -and $mc.alias) { $alias = [string]$mc.alias }
-    }
+    $mc = Read-JsonObj $monCfgFile
+    if ($mc -and $mc.alias) { $alias = [string]$mc.alias }
+    if ([string]::IsNullOrWhiteSpace($alias) -and $st) { try { $alias = [string](($st | ConvertFrom-Json).alias) } catch { } }
     $ftpSt = Read-JsonText $ftpStatusFile
     $dbSt  = Read-JsonText $dbStatusFile
     $sb = New-Object System.Text.StringBuilder
