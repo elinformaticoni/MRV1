@@ -441,6 +441,29 @@ function mr_z_aplicar(array $pcs, array $secciones, array &$errores): array
     return $hechas;
 }
 
+/**
+ * Corrige el nombre (alias) de una PC: lo cambia ya en la base y lo manda a la PC en su instrucción ("alias"),
+ * conservando las secciones que la instrucción ya tuviera (son lo que este formulario muestra). Mismo criterio
+ * que accion=nombre_guardar de index.php. Lanza excepción si no se pudo escribir la instrucción.
+ */
+function mr_z_nombre(PDO $pdo, string $pc, string $nombre): void
+{
+    $ant = mr_z_leer($pc);
+    $secciones = [];
+    foreach (['targets', 'detection', 'db', 'ftp'] as $k) {
+        if (isset($ant[$k])) {
+            $secciones[$k] = $ant[$k];
+        }
+    }
+    $rev = max(time(), (int) ($ant['revision'] ?? 0) + 1);
+    mr_z_guardar($pc, array_merge(
+        ['schemaVersion' => 1, 'revision' => $rev, 'generadoEn' => date('c', $rev)],
+        $secciones,
+        ['alias' => $nombre]
+    ));
+    $pdo->prepare('UPDATE computadoras SET alias = ? WHERE pc = ?')->execute([$nombre, $pc]);
+}
+
 /** true si la instrucción guardada ya trae exactamente estas secciones. */
 function mr_z_igual_a_guardada(?array $guardada, array $secciones): bool
 {
@@ -514,6 +537,25 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && !isset($_POST['clave'])) {
             : "$pcSel no tenía instrucción guardada."];
         header('Location: ' . $urlBase . '?pc=' . rawurlencode($pcSel));
         exit;
+    } elseif ($op === 'nombre') {
+        $nuevo = trim((string) preg_replace('/\s+/u', ' ', (string) ($_POST['nombre'] ?? '')));
+        if ($nuevo === '') {
+            $errores[] = 'Escriba el nombre del equipo.';
+        } elseif (mb_strlen($nuevo) > 150) {
+            $errores[] = 'El nombre no puede superar 150 caracteres.';
+        } elseif (preg_match('/[\x00-\x1F\x7F]/', $nuevo)) {
+            $errores[] = 'El nombre tiene caracteres no válidos.';
+        } else {
+            try {
+                mr_z_nombre($pdo, $pcSel, $nuevo);
+                $_SESSION['mr_z_flash'] = ["Nombre de {$pcSel} cambiado a «{$nuevo}». Ya se ve en el panel; el equipo lo adopta en su próxima carga a la API (o al reiniciar) y la configuración que tenía no cambia."];
+                header('Location: ' . $urlBase . '?pc=' . rawurlencode($pcSel));
+                exit;
+            } catch (Throwable $e) {
+                error_log('[MR zombie.php nombre] ' . $e->getMessage());
+                $errores[] = 'No se pudo cambiar el nombre.' . (mr_debug_habilitado() ? ' ' . $e->getMessage() : '');
+            }
+        }
     } elseif ($op === 'guardar' || $op === 'copiar') {
         $form = mr_z_form_desde_post($_POST);
         $secciones = mr_z_construir($form, $errores);
@@ -610,6 +652,21 @@ ob_start();
         $filasDest[] = mr_z_destino_vacio();
     }
     ?>
+  <details class="nombre"<?= $errores && ($_POST['op'] ?? '') === 'nombre' ? ' open' : '' ?>>
+    <summary>✎ Editar nombre del equipo</summary>
+    <form method="post" class="nombre-f" autocomplete="off">
+      <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
+      <input type="hidden" name="pc" value="<?= h($pcSel) ?>">
+      <input type="hidden" name="op" value="nombre">
+      <label for="nombre-in" class="mut">Nombre que se muestra (equipo de Windows: <span class="mono"><?= h($pcSel) ?></span>)</label>
+      <div class="nombre-fila">
+        <input id="nombre-in" name="nombre" value="<?= h((string) ($_POST['op'] ?? '') === 'nombre' ? (string) ($_POST['nombre'] ?? '') : ($alias !== '' ? $alias : $pcSel)) ?>" maxlength="150" required>
+        <button class="pri" type="submit">Guardar nombre</button>
+      </div>
+      <div class="mut">No cambia la configuración del equipo: solo su nombre. La carpeta del FTP lleva este nombre; si cambia, la siguiente carga crea una carpeta nueva.</div>
+    </form>
+  </details>
+
   <form method="post" id="form" autocomplete="off">
   <input type="hidden" name="csrf" value="<?= h($csrf) ?>">
   <input type="hidden" name="pc" value="<?= h($pcSel) ?>">
@@ -628,7 +685,7 @@ ob_start();
     </div>
   </div>
 
-  <p class="mut">Solo se envían las secciones marcadas; la PC sobrescribe esos campos y deja intactos los demás. Nunca se envían credenciales, token ni URL. El nombre del equipo solo se cambia desde el panel de análisis («Editar nombre»).</p>
+  <p class="mut">Solo se envían las secciones marcadas; la PC sobrescribe esos campos y deja intactos los demás. Nunca se envían credenciales, token ni URL. El nombre del equipo se cambia con «Editar nombre» (aquí arriba o en el panel de análisis).</p>
 
   <fieldset class="sec" data-sec="targets"<?= $form['inc']['targets'] ? '' : ' disabled' ?>>
     <legend><label><input type="checkbox" name="inc[targets]" <?= $form['inc']['targets'] ? 'checked' : '' ?>> Destinos a monitorear</label></legend>
@@ -852,6 +909,10 @@ legend label{display:flex;gap:8px;align-items:center;cursor:pointer}
 .dest{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) 34px;gap:8px;margin-bottom:6px;align-items:center}
 .dest.cab{font-size:12px;color:var(--mut);margin-bottom:4px}
 button.x{padding:0;width:34px;height:34px;font-size:18px;line-height:1;color:var(--mut)}
+details.nombre{margin:0 0 10px;border:1px solid var(--bd);border-radius:10px;background:var(--panel);padding:6px 12px}
+details.nombre summary{cursor:pointer;color:var(--pri);font-weight:600;padding:3px 0}
+.nombre-f{display:grid;gap:6px;padding:6px 0 4px}
+.nombre-fila{display:flex;gap:8px;flex-wrap:wrap}.nombre-fila input{flex:1;min-width:220px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .grid2 label{display:block;font-size:13px;color:var(--mut)}.grid2 input{margin-top:3px}
 .chk{display:flex;gap:8px;align-items:center;margin-top:10px}
