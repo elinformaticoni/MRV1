@@ -261,6 +261,11 @@ function mr_eliminar_pc(PDO $pdo, string $pc): array
         // La tabla de notas puede no existir todavía (sql/003_notas.sql): no es un error.
     }
 
+    $rutaEnvio = mr_envio_ruta($pc);
+    if ($rutaEnvio !== null && is_file($rutaEnvio)) {
+        @unlink($rutaEnvio);
+    }
+
     $rutaZombie = mr_ruta_zombie($pc);
     if ($rutaZombie !== null && is_file($rutaZombie)) {
         @unlink($rutaZombie);
@@ -582,6 +587,7 @@ function mr_consultar_datos(PDO $pdo, string $desde, string $hasta, array $pcs):
         if (isset($maq[$pc])) {
             $maq[$pc]['destinos'] = array_values($maq[$pc]['destinos']);
             $maq[$pc]['version'] = mr_version_pc($pc);
+            $maq[$pc]['envio'] = mr_envio_pc($pc);   // último envío (hora de la PC) y su frecuencia: acota el estado "en curso"
             $maq[$pc]['ip_previa'] = mr_ip_previa($pdo, $pc, $desde);
             $lista[] = $maq[$pc];
         }
@@ -1052,8 +1058,9 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
   }
 
   /* Convierte las filas de un destino en un día en segmentos y marcas.
-     fila = [fecha, hora, tipo, tiempo_s, latencia_ms, mensaje] */
-  function segmentosDia(filas, fecha, ahora) {
+     fila = [fecha, hora, tipo, tiempo_s, latencia_ms, mensaje]
+     limite = segundos del día hasta los que se da por vivo el estado abierto de hoy (último envío de la PC + su espera), o null. */
+  function segmentosDia(filas, fecha, ahora, limite, envio) {
     var segs = [], marcas = [];
     for (var i = 0; i < filas.length; i++) {
       var f = filas[i], s = secs(f[1]), tipo = f[2], msg = f[5] || '';
@@ -1070,7 +1077,12 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
         if (b > 86400) b = 86400;
         segs.push({ a: s, b: b, tipo: tipo, lat: f[4], msg: msg });
       } else if (sig === null && ahora && fecha === ahora.fecha && ahora.s > s) {
-        segs.push({ a: s, b: ahora.s, tipo: tipo, abierto: true, msg: msg });
+        // Estado en curso (la última fila aún sin cerrar). Se pinta hasta AHORA solo mientras la PC siga confirmando: pasado
+        // el último envío + su espera (runEveryMin) sin otro envío, se asume apagada, suspendida o sin red y no se pinta más.
+        var fin = ahora.s, recortado = false;
+        if (limite !== null && limite !== undefined && limite < fin) { fin = Math.max(s, limite); recortado = true; }
+        if (fin > s) segs.push({ a: s, b: fin, tipo: tipo, abierto: true, msg: msg, envio: envio || null, recortado: recortado });
+        else marcas.push({ s: s, tipo: 'INCOMPLETO', msg: msg + ' (sin cierre)' });
       } else if (sig !== null) {
         segs.push({ a: s, b: sig, tipo: 'INC', orig: tipo, msg: msg });
       } else {
@@ -1199,9 +1211,19 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
         for (var hi = 0; hi < histIp.length && histIp[hi].f < d; hi++) previa = histIp[hi].ip;
         var maq = { pc: m.pc, alias: m.alias, version: m.version || null, destinos: [], adapt: [], hayDatos: false, caidas: 0, completa: false };
         var todas = [], cobertura = [], crudos = [];
+        // Último envío de la PC (hora de la PC) y su frecuencia: acota el estado abierto de HOY. Sin dato (cliente anterior a 1.13.12): como antes.
+        var limiteEnvio = null, infoEnvio = null;
+        if (ahora && d === ahora.fecha && m.envio && m.envio.enviado && m.envio.frecuencia) {
+          var pe = String(m.envio.enviado).split('T');
+          if (pe[0] === ahora.fecha) {
+            var ult = secs(pe[1]);
+            limiteEnvio = ult + m.envio.frecuencia * 60 + GRACIA;
+            infoEnvio = { ult: ult, hasta: limiteEnvio, frec: m.envio.frecuencia };
+          }
+        }
         m.destinos.forEach(function (de) {
           var filas = fd[de.destino] || [];
-          var r = segmentosDia(filas, d, ahora);
+          var r = segmentosDia(filas, d, ahora, limiteEnvio, infoEnvio);
           r.segs.forEach(function (sg) { cobertura.push({ a: sg.a, b: sg.b }); });
           filas.forEach(function (f) { todas.push(f); });
           crudos.push({ destino: de.destino, filas: filas, r: r });
@@ -1250,6 +1272,8 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
   /* Margen para considerar que un destino tuvo registros durante TODO el horario
      (arranque del monitor unos segundos después de la hora de inicio, etc.). */
   var HOLGURA = 60;
+  /* Margen (s) sobre la espera de la PC antes de dar por perdido su siguiente envío (la tarea puede demorar unos segundos). */
+  var GRACIA = 120;
 
   function redVisible(red, redes) {
     if (red === 'wifi') return !!redes.wifi;
@@ -1470,7 +1494,13 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
           if (!colocar(s, sg.a, sg.b, ini, fin)) return;
           var tip = de.destino + ' · ' + (sg.tipo === 'INC' ? 'Incompleto (' + (NOMBRE_TIPO[sg.orig] || sg.orig) + ', sin cierre)' : NOMBRE_TIPO[sg.tipo]) +
             '\n' + hhmmss(sg.a) + ' – ' + hhmmss(sg.b) + '  (' + durTexto(sg.b - sg.a) + ')';
-          if (sg.abierto) tip += '\nEstado en curso según el último envío (no se suma)';
+          if (sg.abierto) {
+            tip += '\nEstado en curso según el último envío (no se suma)';
+            if (sg.envio) {
+              tip += '\nÚltimo envío: ' + hhmmss(sg.envio.ult) + ' · espera ' + sg.envio.frec + ' min (hasta ' + hhmm(sg.envio.hasta) + ')';
+              if (sg.recortado) tip += '\nSin envío posterior: se asume apagada, suspendida o sin red';
+            }
+          }
           if (sg.tipo === 'OK' && sg.lat) tip += '\nLatencia promedio: ' + sg.lat + ' ms';
           if (sg.msg) tip += '\n' + sg.msg;
           var ad = adaptadorEn(m.adapt, sg.a);

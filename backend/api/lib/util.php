@@ -132,6 +132,49 @@ function mr_version_publicada(): ?string
 }
 
 /**
+ * Último envío de datos de una PC (api/update/envios/<pc>.json, protegido por el .htaccess de update/): la hora LOCAL de
+ * la PC al enviar (la misma base de tiempo que las filas de sus CSV, no la del servidor) y la frecuencia configurada
+ * (runEveryMin). El análisis lo usa para no pintar como "en curso" el estado abierto de una PC que dejó de enviar.
+ * Devuelve false si el nombre de la PC no sirve como nombre de archivo.
+ */
+function mr_envio_ruta(string $pc): ?string
+{
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/', $pc) || str_contains($pc, '..')) {
+        return null;
+    }
+    return __DIR__ . '/../update/envios/' . strtolower($pc) . '.json';
+}
+
+function mr_envio_guardar(string $pc, string $enviado, int $frecuenciaMin): bool
+{
+    $ruta = mr_envio_ruta($pc);
+    if ($ruta === null || !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', $enviado) || $frecuenciaMin < 5 || $frecuenciaMin > 1440) {
+        return false;
+    }
+    $dir = dirname($ruta);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+        return false;
+    }
+    $ant = is_file($ruta) ? json_decode((string) @file_get_contents($ruta), true) : null;
+    if (is_array($ant) && is_string($ant['enviado'] ?? null) && $ant['enviado'] > $enviado) {
+        return true;   // llegó fuera de orden: se conserva el más reciente
+    }
+    $json = json_encode(['enviado' => $enviado, 'frecuencia' => $frecuenciaMin, 'recibido' => date('c')], JSON_UNESCAPED_UNICODE);
+    return @file_put_contents($ruta, $json, LOCK_EX) !== false;
+}
+
+/** { enviado: 'AAAA-MM-DDTHH:MM:SS' (hora de la PC), frecuencia: minutos } o null si la PC nunca lo informó. */
+function mr_envio_pc(string $pc): ?array
+{
+    $ruta = mr_envio_ruta($pc);
+    $d = ($ruta !== null && is_file($ruta)) ? json_decode((string) @file_get_contents($ruta), true) : null;
+    if (!is_array($d) || !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', (string) ($d['enviado'] ?? '')) || (int) ($d['frecuencia'] ?? 0) < 5) {
+        return null;
+    }
+    return ['enviado' => (string) $d['enviado'], 'frecuencia' => (int) $d['frecuencia']];
+}
+
+/**
  * Versión de scripts que informó una PC (api/update/pcs/<pc>.json, lo escribe
  * actualizar.php?accion=confirmar). Devuelve null si la PC nunca informó.
  *   estado: 'ok' al día · 'vieja' hay una versión publicada más nueva · 'falla' el último intento falló
