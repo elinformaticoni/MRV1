@@ -38,6 +38,7 @@ if ($accion === 'confirmar') {
     $ver = trim((string) ($body['version'] ?? ''));
     if (!preg_match('/^[A-Za-z0-9._-]{1,63}$/', $pc)) { mr_error(422, 'Campo "pc" inválido.'); }
     if (!preg_match('/^\d+(\.\d+){1,3}$/', $ver)) { mr_error(422, 'Campo "version" inválido.'); }
+    mr_envio_anotar($pc);   // toda comunicación de la PC confirma que sigue encendida
     $detalle = mb_substr(trim((string) ($body['detalle'] ?? '')), 0, 300);
     $resultado = (string) ($body['resultado'] ?? '');
     if (!in_array($resultado, ['actualizada', 'al_dia', 'revertida', 'error', 'firma_invalida', 'manifiesto_invalido', 'sin_clave'], true)) {

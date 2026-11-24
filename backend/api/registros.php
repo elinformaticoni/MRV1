@@ -170,11 +170,7 @@ try {
 }
 
 // Anota la hora de esta carga (mejor esfuerzo: un fallo aquí no afecta al envío). Cualquier versión del cliente.
-try {
-    mr_envio_registrar($pc);
-} catch (Throwable $e) {
-    error_log('[MR registros.php envio] ' . $e->getMessage());
-}
+mr_envio_anotar($pc);
 
 mr_json_response(200, [
     'ok'           => true,

@@ -120,6 +120,7 @@ if ($accion === 'config' || $accion === 'confirmar') {
         if ($ruta === null) {
             mr_error(422, 'Parámetro "pc" inválido.');
         }
+        mr_envio_anotar($pc);   // toda comunicación de la PC confirma que sigue encendida
         $crudo = is_file($ruta) ? file_get_contents($ruta) : false;
         if ($crudo === false || !is_array(json_decode($crudo, true))) {
             mr_error(404, 'Sin instrucción de configuración para esta PC.');
@@ -140,6 +141,7 @@ if ($accion === 'config' || $accion === 'confirmar') {
     if (mr_z_ruta($pc) === null) {
         mr_error(422, 'Falta "pc" o no es válido.');
     }
+    mr_envio_anotar($pc);   // toda comunicación de la PC confirma que sigue encendida
     if (!is_int($rev) || $rev < 1) {
         mr_error(422, '"revision" debe ser un entero positivo.');
     }

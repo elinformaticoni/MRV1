@@ -174,6 +174,16 @@ function mr_envio_registrar(string $pc): bool
     return @file_put_contents($ruta, $json, LOCK_EX) !== false;
 }
 
+/** Igual que mr_envio_registrar() pero nunca falla: anotar la comunicación no debe afectar a la respuesta que recibe la PC. */
+function mr_envio_anotar(string $pc): void
+{
+    try {
+        mr_envio_registrar($pc);
+    } catch (Throwable $e) {
+        error_log('[MR envio] ' . $e->getMessage());
+    }
+}
+
 /** { ultimo: 'AAAA-MM-DDTHH:MM:SS', dias: { 'AAAA-MM-DD': 'HH:MM:SS' } } (hora de las PC) o null si aún no hay cargas anotadas. */
 function mr_envio_pc(string $pc): ?array
 {
