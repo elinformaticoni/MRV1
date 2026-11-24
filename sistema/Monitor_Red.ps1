@@ -522,6 +522,15 @@ function Write-Status([bool]$running) {
             if (((Get-Date) - $script:UpdInfoAt).TotalSeconds -ge 20) {
                 $script:UpdInfoAt = Get-Date
                 $script:UpdInfo = $null
+                # [v1.13.11] La version de los scripts se relee junto con el estado de la actualizacion: tras actualizar sin
+                # reiniciar el monitor (o hasta que reinicie) status.json seguia diciendo la version del arranque.
+                try {
+                    $vpath = Join-Path $script:CfgDir 'version.json'
+                    if (Test-Path -LiteralPath $vpath) {
+                        $vv = [System.IO.File]::ReadAllText($vpath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                        if ($vv.version -and ([string]$vv.version -match '^\d+(\.\d+){1,3}$')) { $script:VersionText = 'MR V' + $vv.version }
+                    }
+                } catch { }
                 if (Test-Path -LiteralPath $script:UpdateStateFile) {
                     $us = [System.IO.File]::ReadAllText($script:UpdateStateFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
                     $script:UpdInfo = [ordered]@{

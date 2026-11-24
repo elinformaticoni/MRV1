@@ -156,6 +156,25 @@ function Send-Bytes($ctx, [int]$code, [string]$type, [byte[]]$bytes, [hashtable]
 function Send-Json($ctx, [string]$json, [hashtable]$extra) { Send-Bytes $ctx 200 'application/json; charset=utf-8' $utf8.GetBytes($json) $extra }
 function Send-Text($ctx, [int]$code, [string]$msg) { Send-Bytes $ctx $code 'text/plain; charset=utf-8' $utf8.GetBytes($msg) $null }
 
+# [v1.13.11] Version de los scripts INSTALADOS (config\version.json), siempre al dia. status.json trae la que el monitor
+# leyo al arrancar, que queda vieja hasta el siguiente reinicio del monitor.
+$script:VerInst = ''
+$script:VerInstStamp = -1
+function Get-VersionInstalada {
+    try {
+        $vf = Join-Path $Root 'config\version.json'
+        if (-not (Test-Path -LiteralPath $vf)) { return '' }
+        $stamp = (Get-Item -LiteralPath $vf).LastWriteTimeUtc.Ticks
+        if ($stamp -ne $script:VerInstStamp) {
+            $o = Read-JsonObj $vf
+            $script:VerInst = ''
+            if ($o -and ([string]$o.version -match '^\d+(\.\d+){1,3}$')) { $script:VerInst = [string]$o.version }
+            $script:VerInstStamp = $stamp
+        }
+        return $script:VerInst
+    } catch { return '' }
+}
+
 function Get-EstadoJson {
     $now = Get-Date
     $st = Read-JsonText $statusFile
@@ -170,6 +189,7 @@ function Get-EstadoJson {
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append('{"ahora":').Append((ConvertTo-JsonString $now.ToString('yyyy-MM-ddTHH:mm:ss')))
     [void]$sb.Append(',"alias":').Append((ConvertTo-JsonString $alias))
+    [void]$sb.Append(',"instalada":').Append((ConvertTo-JsonString (Get-VersionInstalada)))
     [void]$sb.Append(',"status":').Append($(if ($st) { $st } else { 'null' }))
     [void]$sb.Append(',"ftp":{"config":').Append((ConvertTo-JsonString (Get-LoaderConfigState 'FTP'))).Append(',"status":').Append($(if ($ftpSt) { $ftpSt } else { 'null' })).Append('}')
     [void]$sb.Append(',"db":{"config":').Append((ConvertTo-JsonString (Get-LoaderConfigState 'DB'))).Append(',"status":').Append($(if ($dbSt) { $dbSt } else { 'null' })).Append('}}')

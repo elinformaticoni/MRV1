@@ -296,7 +296,7 @@ td.m{overflow-wrap:anywhere;min-width:220px}
       return;
     }
     seguirAlias();
-    $('ver').textContent = st.version || '';
+    $('ver').textContent = est.instalada ? 'MR V' + est.instalada : (st.version || '');   // instalada = config\version.json (status.json trae la del arranque del monitor)
     var ad = st.adapter, adTxt = '(sin adaptador)';
     if (ad && ad.name && ad.ip) adTxt = ad.name + ' (' + ad.type + (ad.ssid ? ' ' + ad.ssid : '') + ') ' + ad.ip;
     $('ident').textContent = st.computer + ' · ' + st.user + ' · ' + adTxt;
@@ -640,7 +640,7 @@ td.m{overflow-wrap:anywhere;min-width:220px}
     var st = est.status, u = st && st.update, ahora = parseLocal(est.ahora) || { fecha: '', seg: 0 };
     var c = el('div', 'card carga'), cab = el('div', 'carga-t');
     cab.appendChild(el('span', null, 'Actualización de scripts'));
-    var ver = st && st.version ? String(st.version).replace(/^MR\s*V?/i, '') : '--';
+    var ver = est.instalada ? String(est.instalada) : (st && st.version ? String(st.version).replace(/^MR\s*V?/i, '') : '--');
     function p(t, cl) { c.appendChild(el('p', cl || '', t)); }
     if (!u) {
       cab.appendChild(el('span', 'badge off', 'SIN DATOS')); c.appendChild(cab);
