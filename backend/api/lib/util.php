@@ -132,11 +132,19 @@ function mr_version_publicada(): ?string
 }
 
 /**
- * Último envío de datos de una PC (api/update/envios/<pc>.json, protegido por el .htaccess de update/): la hora LOCAL de
- * la PC al enviar (la misma base de tiempo que las filas de sus CSV, no la del servidor) y la frecuencia configurada
- * (runEveryMin). El análisis lo usa para no pintar como "en curso" el estado abierto de una PC que dejó de enviar.
- * Devuelve false si el nombre de la PC no sirve como nombre de archivo.
+ * Cargas de datos de cada PC (api/update/envios/<pc>.json, protegido por el .htaccess de update/). La base solo sabe cuándo
+ * llegó o cambió cada fila, no cuándo llegó cada carga: una PC que reenvía su fila abierta sin cambios no deja rastro. Por eso
+ * registros.php anota la hora de cada carga (cualquier versión del cliente). Las horas se guardan en hora de Nicaragua, que es la
+ * base de tiempo de las filas de los CSV. El análisis las usa para no pintar como "en curso" a una PC que dejó de cargar.
  */
+const MR_TZ_PCS = 'America/Managua';
+
+/** Hora local de las PC (Nicaragua, sin horario de verano) como 'AAAA-MM-DDTHH:MM:SS', a partir de un instante UNIX. */
+function mr_hora_local(int $epoch): string
+{
+    return (new DateTimeImmutable('@' . $epoch))->setTimezone(new DateTimeZone(MR_TZ_PCS))->format('Y-m-d\TH:i:s');
+}
+
 function mr_envio_ruta(string $pc): ?string
 {
     if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/', $pc) || str_contains($pc, '..')) {
@@ -145,33 +153,42 @@ function mr_envio_ruta(string $pc): ?string
     return __DIR__ . '/../update/envios/' . strtolower($pc) . '.json';
 }
 
-function mr_envio_guardar(string $pc, string $enviado, int $frecuenciaMin): bool
+/** Anota que la PC cargó datos ahora: la hora de su última carga de cada día (se conservan los últimos 40 días). */
+function mr_envio_registrar(string $pc): bool
 {
     $ruta = mr_envio_ruta($pc);
-    if ($ruta === null || !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', $enviado) || $frecuenciaMin < 5 || $frecuenciaMin > 1440) {
+    if ($ruta === null) {
         return false;
     }
     $dir = dirname($ruta);
     if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
         return false;
     }
+    $ahora = mr_hora_local(time());
     $ant = is_file($ruta) ? json_decode((string) @file_get_contents($ruta), true) : null;
-    if (is_array($ant) && is_string($ant['enviado'] ?? null) && $ant['enviado'] > $enviado) {
-        return true;   // llegó fuera de orden: se conserva el más reciente
-    }
-    $json = json_encode(['enviado' => $enviado, 'frecuencia' => $frecuenciaMin, 'recibido' => date('c')], JSON_UNESCAPED_UNICODE);
+    $dias = is_array($ant) && is_array($ant['dias'] ?? null) ? $ant['dias'] : [];
+    $dias[substr($ahora, 0, 10)] = substr($ahora, 11);
+    krsort($dias);
+    $dias = array_slice($dias, 0, 40, true);
+    $json = json_encode(['ultimo' => $ahora, 'dias' => $dias], JSON_UNESCAPED_UNICODE);
     return @file_put_contents($ruta, $json, LOCK_EX) !== false;
 }
 
-/** { enviado: 'AAAA-MM-DDTHH:MM:SS' (hora de la PC), frecuencia: minutos } o null si la PC nunca lo informó. */
+/** { ultimo: 'AAAA-MM-DDTHH:MM:SS', dias: { 'AAAA-MM-DD': 'HH:MM:SS' } } (hora de las PC) o null si aún no hay cargas anotadas. */
 function mr_envio_pc(string $pc): ?array
 {
     $ruta = mr_envio_ruta($pc);
     $d = ($ruta !== null && is_file($ruta)) ? json_decode((string) @file_get_contents($ruta), true) : null;
-    if (!is_array($d) || !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', (string) ($d['enviado'] ?? '')) || (int) ($d['frecuencia'] ?? 0) < 5) {
+    if (!is_array($d) || !preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/', (string) ($d['ultimo'] ?? '')) || !is_array($d['dias'] ?? null)) {
         return null;
     }
-    return ['enviado' => (string) $d['enviado'], 'frecuencia' => (int) $d['frecuencia']];
+    $dias = [];
+    foreach ($d['dias'] as $f => $h) {
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f) && preg_match('/^\d{2}:\d{2}:\d{2}$/', (string) $h)) {
+            $dias[(string) $f] = (string) $h;
+        }
+    }
+    return ['ultimo' => (string) $d['ultimo'], 'dias' => $dias];
 }
 
 /**

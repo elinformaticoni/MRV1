@@ -623,9 +623,9 @@ El envío es por **filas**, no por archivo: cada fila del CSV se traduce a un ob
 - Log propio: `diag\db_worker.log` (misma rotación por tamaño que `ftp_worker.log`).
 - Estado propio para la consola: `Root\db_status.json` (última corrida, archivos sincronizados/fallidos, filas insertadas/actualizadas, próxima hora estimada) — mismo patrón que `ftp_status.json`; la consola lo muestra en el bloque «CARGAS AL SERVIDOR» (ver 8).
 
-### 10.2.0 Último envío y espera [1.13.12]
+### 10.2.0 Última carga y estado «en curso» (solo servidor y gráfico)
 
-Cada petición a la API incluye `enviado` (hora local de la PC) y `frecuencia_min` (el `runEveryMin` vigente). El servidor los guarda por PC y el análisis semanal los usa para no pintar como «en curso» la última fila abierta de una PC que dejó de enviar (por ejemplo, apagada a la hora de salida): el tramo se pinta hasta `último envío + frecuencia + 2 min`, y más allá se asume apagada, suspendida o sin red. Al día siguiente la fila `INICIO` confirma el arranque. La hora que se manda es la de la PC (no la del servidor) porque es la misma base de tiempo de las filas de los CSV.
+La última fila de un día que quedó sin cerrar (apagado abrupto) se pintaba hasta «ahora» como si la PC siguiera sincronizando. Ahora `registros.php` anota la hora de cada carga (de cualquier versión del cliente; no hay que actualizar las PC) y el análisis semanal pinta ese tramo (rayado, no se suma) solo hasta `última carga + frecuencia de carga + 2 min`; pasado ese plazo sin otra carga se asume apagada, suspendida o sin red. En días anteriores se deja hasta lo último confirmado ese día (carga anotada o, en días guardados antes del cambio, la última vez que llegó o cambió una fila). La frecuencia es la de la configuración remota de la PC (`db.runEveryMin`) cuando ya la aplicó, y 180 min si no. Al día siguiente la fila `INICIO` confirma el arranque.
 
 ### 10.2.1 Cuidado con las protecciones del servidor [1.13.8]
 
@@ -721,7 +721,7 @@ Cada PC detecta sola una versión nueva y la instala, sin reinstalar con `Instal
 
 **Cuándo corre:** en un proceso aparte y oculto, en cada `INICIO` del monitor (arranque y cambio de día), al terminar cada corrida de `Cargador_DB.ps1` y con el botón «Buscar y actualizar ahora» de la consola web; como máximo una consulta cada 30 minutos (salvo `-Force`). Una sola instancia a la vez (mutex). **Nunca toca** `config\*.json` (salvo `version.json`), credenciales, alias, CSV ni estados.
 
-**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.12** (publicada: 1.13.11). La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
+**Versionado (X.Y.Z).** El primer número (1) no cambia; el segundo sube con cambios importantes del monitor (por ejemplo, los que afecten la base de datos); el tercero sube con cada cambio. Versión actual: **1.13.11** (publicada: 1.13.11). La fuente única es `version = '…'` en `Instalar_Monitor.ps1`.
 
 **Seguimiento [1.13.1].** El resultado de cada consulta queda en `diag\update_state.json`; `Monitor_Red.ps1` lo publica en `status.json` (campo `update`: `result`, `lastCheck`, `remote`, `detail`, releído cada 20 s) y la consola web lo muestra en la tarjeta «Actualización de scripts», con una alerta si la última fue `revertida`, `error`, `firma_invalida` o `manifiesto_invalido`. Además `Actualizar_Script.ps1` informa al servidor la versión instalada y cada fallo (ver `backend/IA.md` 5.2), y `index.php` muestra esa versión junto al nombre de cada máquina.
 

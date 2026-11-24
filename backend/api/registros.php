@@ -169,10 +169,9 @@ try {
     mr_error(500, 'Error interno al guardar los registros.', $extra);
 }
 
-// Último envío de la PC (hora local de la PC + frecuencia que tiene configurada). Mejor esfuerzo: un fallo aquí no afecta
-// al envío, y los clientes anteriores a la 1.13.12 no lo mandan.
+// Anota la hora de esta carga (mejor esfuerzo: un fallo aquí no afecta al envío). Cualquier versión del cliente.
 try {
-    mr_envio_guardar($pc, (string) ($body['enviado'] ?? ''), (int) ($body['frecuencia_min'] ?? 0));
+    mr_envio_registrar($pc);
 } catch (Throwable $e) {
     error_log('[MR registros.php envio] ' . $e->getMessage());
 }

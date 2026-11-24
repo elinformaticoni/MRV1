@@ -541,6 +541,64 @@ function mr_ip_previa(PDO $pdo, string $pc, string $desde): ?string
     return null;
 }
 
+/**
+ * Minutos entre cargas de una PC: la frecuencia de su configuración remota (db.runEveryMin) si la PC ya aplicó esa instrucción;
+ * si no (sin instrucción, o aún pendiente), 180, la del instalador. Ante la duda se prefiere el valor más largo: es mejor pintar
+ * unos minutos de más que dar por apagada a una PC encendida.
+ */
+function mr_frecuencia_envio(PDO $pdo, string $pc): int
+{
+    $ruta = mr_ruta_zombie($pc);
+    $c = ($ruta !== null && is_file($ruta)) ? json_decode((string) @file_get_contents($ruta), true) : null;
+    $min = is_array($c) ? (int) ($c['db']['runEveryMin'] ?? 0) : 0;
+    if ($min < 5 || $min > 720) {
+        return 180;
+    }
+    try {
+        $st = $pdo->prepare('SELECT config_rev_aplicada FROM computadoras WHERE pc = ?');
+        $st->execute([$pc]);
+        $aplicada = (int) $st->fetchColumn();
+    } catch (Throwable $e) {
+        return 180;   // sin la columna (falta sql/002) no se sabe si la aplicó
+    }
+    return $aplicada >= (int) ($c['revision'] ?? PHP_INT_MAX) ? $min : 180;
+}
+
+/**
+ * Días ANTERIORES a hoy: { pc: { 'AAAA-MM-DD': 'AAAA-MM-DDTHH:MM:SS' } } = la última vez (hora de las PC) que llegó o cambió una fila de
+ * ese día, contando solo lo ocurrido ese mismo día. Es lo único que la base sabe de días ya guardados (creado_en / actualizado_en de cada
+ * fila): sirve para pintar el estado abierto de una PC que se apagó solo hasta lo último confirmado.
+ */
+function mr_confirmado_db(PDO $pdo, array $pcs, string $desde, string $hasta): array
+{
+    $res = [];
+    if (!$pcs) {
+        return $res;
+    }
+    $hoy = substr(mr_hora_local(time()), 0, 10);
+    $marcas = implode(',', array_fill(0, count($pcs), '?'));
+    $tz = new DateTimeZone(MR_TZ_PCS);
+    for ($d = new DateTimeImmutable($desde); $d->format('Y-m-d') <= $hasta; $d = $d->modify('+1 day')) {
+        $f = $d->format('Y-m-d');
+        if ($f >= $hoy) {
+            break;
+        }
+        $fin = (new DateTimeImmutable($f . ' 23:59:59', $tz))->getTimestamp();
+        $st = $pdo->prepare(
+            "SELECT pc, MAX(CASE WHEN UNIX_TIMESTAMP(actualizado_en) <= ? THEN UNIX_TIMESTAMP(actualizado_en)
+                                 WHEN UNIX_TIMESTAMP(creado_en) <= ? THEN UNIX_TIMESTAMP(creado_en) END) AS t
+               FROM registros WHERE fecha = ? AND pc IN ($marcas) GROUP BY pc"
+        );
+        $st->execute(array_merge([$fin, $fin, $f], $pcs));
+        foreach ($st as $r) {
+            if ($r['t'] !== null) {
+                $res[(string) $r['pc']][$f] = mr_hora_local((int) $r['t']);
+            }
+        }
+    }
+    return $res;
+}
+
 function mr_consultar_datos(PDO $pdo, string $desde, string $hasta, array $pcs): array
 {
     $marcas = implode(',', array_fill(0, count($pcs), '?'));
@@ -583,11 +641,22 @@ function mr_consultar_datos(PDO $pdo, string $desde, string $hasta, array $pcs):
 
     // Respeta el orden en que se pidieron las máquinas
     $lista = [];
+    try {
+        $confirmadoDb = mr_confirmado_db($pdo, $pcs, $desde, $hasta);
+    } catch (Throwable $e) {
+        error_log('[MR index.php confirmado] ' . $e->getMessage());
+        $confirmadoDb = [];
+    }
     foreach ($pcs as $pc) {
         if (isset($maq[$pc])) {
             $maq[$pc]['destinos'] = array_values($maq[$pc]['destinos']);
             $maq[$pc]['version'] = mr_version_pc($pc);
-            $maq[$pc]['envio'] = mr_envio_pc($pc);   // último envío (hora de la PC) y su frecuencia: acota el estado "en curso"
+            // Cargas de la PC (hora de las PC): acotan el estado abierto "en curso" (hoy: última carga + espera; días anteriores: hasta lo último confirmado)
+            $maq[$pc]['envio'] = [
+                'frecuencia' => mr_frecuencia_envio($pdo, $pc),
+                'cargas'     => mr_envio_pc($pc),
+                'db'         => $confirmadoDb[$pc] ?? [],
+            ];
             $maq[$pc]['ip_previa'] = mr_ip_previa($pdo, $pc, $desde);
             $lista[] = $maq[$pc];
         }
@@ -1059,7 +1128,8 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
 
   /* Convierte las filas de un destino en un día en segmentos y marcas.
      fila = [fecha, hora, tipo, tiempo_s, latencia_ms, mensaje]
-     limite = segundos del día hasta los que se da por vivo el estado abierto de hoy (último envío de la PC + su espera), o null. */
+     limite = segundos del día hasta los que se da por vivo el estado abierto: hoy = última carga de la PC + su espera; días anteriores =
+     lo último confirmado de ese día (nada después). null = sin dato (se pinta como antes). */
   function segmentosDia(filas, fecha, ahora, limite, envio) {
     var segs = [], marcas = [];
     for (var i = 0; i < filas.length; i++) {
@@ -1083,6 +1153,9 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
         if (limite !== null && limite !== undefined && limite < fin) { fin = Math.max(s, limite); recortado = true; }
         if (fin > s) segs.push({ a: s, b: fin, tipo: tipo, abierto: true, msg: msg, envio: envio || null, recortado: recortado });
         else marcas.push({ s: s, tipo: 'INCOMPLETO', msg: msg + ' (sin cierre)' });
+      } else if (sig === null && ahora && fecha !== ahora.fecha && limite !== null && limite !== undefined && limite > s) {
+        // Día anterior con la última fila sin cerrar (apagado abrupto): se deja pintado hasta lo último que el servidor confirmó y nada más.
+        segs.push({ a: s, b: Math.min(limite, 86400), tipo: tipo, abierto: true, msg: msg, envio: envio || null, recortado: true });
       } else if (sig !== null) {
         segs.push({ a: s, b: sig, tipo: 'INC', orig: tipo, msg: msg });
       } else {
@@ -1212,13 +1285,17 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
         var maq = { pc: m.pc, alias: m.alias, version: m.version || null, destinos: [], adapt: [], hayDatos: false, caidas: 0, completa: false };
         var todas = [], cobertura = [], crudos = [];
         // Último envío de la PC (hora de la PC) y su frecuencia: acota el estado abierto de HOY. Sin dato (cliente anterior a 1.13.12): como antes.
-        var limiteEnvio = null, infoEnvio = null;
-        if (ahora && d === ahora.fecha && m.envio && m.envio.enviado && m.envio.frecuencia) {
-          var pe = String(m.envio.enviado).split('T');
-          if (pe[0] === ahora.fecha) {
-            var ult = secs(pe[1]);
-            limiteEnvio = ult + m.envio.frecuencia * 60 + GRACIA;
-            infoEnvio = { ult: ult, hasta: limiteEnvio, frec: m.envio.frecuencia };
+        var limiteEnvio = null, infoEnvio = null, env = m.envio || null;
+        if (ahora && env) {
+          var hb = env.cargas && env.cargas.dias && env.cargas.dias[d] ? secs(env.cargas.dias[d]) : null;   // última carga anotada ese día
+          var dbc = env.db && env.db[d] ? String(env.db[d]) : null;                                        // última vez que llegó/cambió una fila ese día
+          var dbs = (dbc && dbc.slice(0, 10) === d) ? secs(dbc.slice(11)) : null;
+          if (d === ahora.fecha) {
+            // Hoy: solo con carga anotada (si no, se pinta hasta ahora como antes). Hasta la última carga + la espera configurada + un margen.
+            if (hb !== null && env.frecuencia) { limiteEnvio = hb + env.frecuencia * 60 + GRACIA; infoEnvio = { hoy: true, ult: hb, hasta: limiteEnvio, frec: env.frecuencia }; }
+          } else {
+            var cs = Math.max(hb === null ? -1 : hb, dbs === null ? -1 : dbs);
+            if (cs >= 0) { limiteEnvio = cs; infoEnvio = { hoy: false, ult: cs }; }
           }
         }
         m.destinos.forEach(function (de) {
@@ -1496,9 +1573,11 @@ a.btn{text-decoration:none;color:inherit;display:inline-block}
             '\n' + hhmmss(sg.a) + ' – ' + hhmmss(sg.b) + '  (' + durTexto(sg.b - sg.a) + ')';
           if (sg.abierto) {
             tip += '\nEstado en curso según el último envío (no se suma)';
-            if (sg.envio) {
-              tip += '\nÚltimo envío: ' + hhmmss(sg.envio.ult) + ' · espera ' + sg.envio.frec + ' min (hasta ' + hhmm(sg.envio.hasta) + ')';
-              if (sg.recortado) tip += '\nSin envío posterior: se asume apagada, suspendida o sin red';
+            if (sg.envio && sg.envio.hoy) {
+              tip += '\nÚltima carga recibida: ' + hhmmss(sg.envio.ult) + ' · se espera la siguiente (cada ' + sg.envio.frec + ' min) hasta ' + hhmm(sg.envio.hasta);
+              if (sg.recortado) tip += '\nSin carga posterior: se asume apagada, suspendida o sin red';
+            } else if (sg.envio) {
+              tip += '\nConfirmado hasta ' + hhmmss(sg.envio.ult) + ' (último dato recibido ese día); después no llegó nada: apagada, suspendida o sin red';
             }
           }
           if (sg.tipo === 'OK' && sg.lat) tip += '\nLatencia promedio: ' + sg.lat + ' ms';

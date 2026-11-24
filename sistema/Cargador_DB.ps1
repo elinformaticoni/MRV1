@@ -343,10 +343,6 @@ try {
             alias   = $alias
             destino = $destino
             filas   = @($filasLote)
-            # [v1.13.12] Hora LOCAL de esta PC al enviar (la misma base de tiempo que las filas de los CSV) y la frecuencia
-            # configurada: el analisis solo da por vivo el estado "en curso" hasta el ultimo envio + esta espera.
-            enviado        = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
-            frecuencia_min = $runEveryMin
         }
         $body = $bodyObj | ConvertTo-Json -Depth 6 -Compress
 
