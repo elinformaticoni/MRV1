@@ -394,6 +394,13 @@ try {
         throw
     }
 
+    # --- [v1.13.9] La version nueva se anota ANTES de reiniciar el monitor: el monitor lee config\version.json al arrancar para
+    # su "MR Vx.y.z" (status.json, consola y fila INICIO de los CSV) y, escrita despues del reinicio, mostraba la version vieja
+    # hasta su siguiente arranque. Si luego hay retroceso, se restaura el contenido anterior.
+    $verAntes = $null
+    try { if (Test-Path -LiteralPath $verFile) { $verAntes = [System.IO.File]::ReadAllBytes($verFile) } } catch { }
+    ([ordered]@{ schemaVersion = 1; version = $remota; actualizadoEn = (Get-Date).ToString('s') } | ConvertTo-Json) | Out-File -LiteralPath $verFile -Encoding utf8 -Force
+
     # --- Si cambio el servidor de la consola web, se cierran los que estan corriendo (con una pestana abierta
     # nunca se cerrarian solos): la proxima apertura de la consola arranca la version nueva.
     if (@($aplicados | Where-Object { $_.Name -eq 'Servidor_Consola.ps1' }).Count -gt 0) {
@@ -419,13 +426,13 @@ try {
         }
     }
     if (-not $sano) {
+        try { if ($null -ne $verAntes) { [System.IO.File]::WriteAllBytes($verFile, $verAntes) } else { Remove-Item -LiteralPath $verFile -Force -ErrorAction SilentlyContinue } } catch { }
         Save-State 'revertida' $remota 'El monitor no arranco con la nueva version; se restauro la anterior.'
         Send-Confirm $baseUrl $token $local $false ('Revertida: la version {0} no arranco.' -f $remota) 'revertida'
         Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
         exit 0
     }
 
-    ([ordered]@{ schemaVersion = 1; version = $remota; actualizadoEn = (Get-Date).ToString('s') } | ConvertTo-Json) | Out-File -LiteralPath $verFile -Encoding utf8 -Force
     Save-State 'actualizada' $remota ('{0} archivo(s) actualizados.' -f $cambios.Count)
     Write-Log ('Actualizacion aplicada: {0} -> {1} ({2} archivo(s)).' -f $local, $remota, $cambios.Count)
     Send-Confirm $baseUrl $token $remota $true ('{0} archivo(s)' -f $cambios.Count) 'actualizada'

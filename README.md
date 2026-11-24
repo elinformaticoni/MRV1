@@ -2,7 +2,7 @@
 
 **Monitoreo continuo de conectividad para Windows, con historial en CSV, consola web en tiempo real con gráfico de latencia, respaldo por FTP, análisis web de caídas entre varias PC, configuración remota y actualización automática.**
 
-[![Versión](https://img.shields.io/badge/versión-1.13.7-blue)](#)
+[![Versión](https://img.shields.io/badge/versión-1.13.8-blue)](#)
 [![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078D6?logo=windows)](#)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1-5391FE?logo=powershell&logoColor=white)](#)
 [![PHP](https://img.shields.io/badge/backend-PHP%208.3%20%2B%20MySQL-777BB4?logo=php&logoColor=white)](#)
@@ -100,7 +100,7 @@ GitHub (etiquetas vX.Y.Z + manifiesto firmado) ──► Actualizar_Script.ps1 �
 - **Franja naranja** = 2 o más máquinas caídas a la vez: indica un problema de la red común, no de una estación.
 - Botones **Cable / Wi-Fi** (Wi-Fi oculto por defecto) para no mezclar caídas de señal inalámbrica.
 - Una **barra tenue con la IP** sobre cada máquina: se extiende mientras la IP no cambie y empieza otra cuando cambia.
-- La etiqueta `v1.13.7` junto al nombre de cada máquina es la versión de scripts que confirmó esa PC (ámbar = atrasada, roja = falló su última actualización).
+- La etiqueta `v1.13.8` junto al nombre de cada máquina es la versión de scripts que confirmó esa PC (ámbar = atrasada, roja = falló su última actualización).
 - **Descargar HTML** genera un archivo autocontenido para compartir por correo, con los mismos botones.
 
 **Configuración remota** — en `https://mrv1.solucionesnicaragua.com/zombie.php` (con clave): elige una PC, corrige sus valores guardados y guarda; con **COPIAR A…** aplicas la misma configuración a otros equipos.
@@ -167,12 +167,13 @@ Un archivo por destino y por día, delimitado por `;`, listo para Excel, PowerSh
 - [`sistema/MRV1.11.md`](./sistema/MRV1.11.md) — guía maestra: arquitectura, decisiones de diseño, consola web, actualización automática, criterios de aceptación.
 - [`backend/IA.md`](./backend/IA.md) y [`backend/README.md`](./backend/README.md) — servidor: base de datos, API, formularios y puesta en marcha.
 
-## 🗺️ Estado actual (1.13.7)
+## 🗺️ Estado actual (1.13.8 publicada)
 
 - ✅ Monitor, consola (web y de texto), cargador FTP y cargador API.
 - ✅ API y base de datos en `mrv1.solucionesnicaragua.com`; análisis semanal con coincidencias, filtro Cable/Wi-Fi, barra de IP y reporte HTML.
-- ✅ Configuración remota con edición por PC y «COPIAR A…».
-- ✅ Actualización automática desde etiquetas de GitHub, con firma y retroceso (la etiqueta `v1.13.7` ya está publicada y verificada; el retroceso del monitor falta probarlo en una PC real).
+- ✅ Configuración remota con edición por PC y «COPIAR A…»; el nombre (alias) del equipo se edita desde el panel, desde Configuración remota y desde la consola local.
+- ✅ Envío a la API en lotes, con corte y espera ante rechazos del servidor (Cloudflare/firewall del hosting).
+- ✅ Actualización automática desde etiquetas de GitHub, con firma y retroceso (la etiqueta `v1.13.8` está publicada y verificada; se probó la actualización 1.13.7 → 1.13.8 en una PC real: 13 s, 18 archivos verificados contra el manifiesto; el retroceso del monitor falta probarlo).
 - ⏳ Reinstalar las PC una vez con la 1.13.7 (o posterior) y desplegar `zombie.php`, `actualizar.php` e `index.php` al hosting.
 - ⏳ Probar el reinicio y el retroceso del monitor en una PC real, la clave de acceso al formulario en producción y varias PC a la vez.
 
