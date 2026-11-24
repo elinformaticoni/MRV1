@@ -268,7 +268,7 @@ function Invoke-CmdRequest($ctx, [int]$port, [string]$nombre, [string]$etiqueta,
 
 function Send-Json2($ctx, [int]$code, [string]$json) { Send-Bytes $ctx $code 'application/json; charset=utf-8' $utf8.GetBytes($json) $null }
 
-# [v1.13.8] «Editar nombre» (alias) del equipo desde la consola web. Igual que las demas acciones, la consola no escribe
+# [v1.13.8] "Editar nombre" (alias) del equipo desde la consola web. Igual que las demas acciones, la consola no escribe
 # config\monitor.json (corre con el usuario normal): valida y deja cmd\alias.request con el nombre nuevo; el monitor lo aplica.
 function Invoke-AliasRequest($ctx, [int]$port) {
     $req = $ctx.Request
